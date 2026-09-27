@@ -91,9 +91,12 @@ export default {
             );
         }
 
+        // Optional reroll winners configured in the database.
+        // If rerollWinners is missing or empty, reroll remains fully random.
         const newWinners = selectWinners(
             participants,
             giveaway.winnerCount,
+            giveaway.rerollWinners
         );
 
         const updatedGiveaway = {
@@ -273,7 +276,7 @@ export default {
                 }
             });
         } catch (logError) {
-            logger.debug('Error logging giveaway reroll event:', logError);
+            logger.debug('Error logging giveaway reroll:', logError);
         }
 
         return InteractionHelper.safeReply(interaction, {
