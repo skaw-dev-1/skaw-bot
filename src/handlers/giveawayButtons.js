@@ -132,11 +132,7 @@ export const giveawayEndHandler = {
             }
 
             const participants = giveaway.participants || [];
-            const winners = selectWinners(
-                participants,
-                giveaway.winnerCount,
-                giveaway.fixedWinners
-            );
+            const winners = selectWinners(participants, giveaway.winnerCount, giveaway.fixedWinners);
 
             giveaway.ended = true;
             giveaway.isEnded = true;
