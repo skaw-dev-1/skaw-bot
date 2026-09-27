@@ -11,6 +11,13 @@ import { logEvent, EVENT_TYPES } from './loggingService.js';
 const GIVEAWAY_CONFIG = botConfig.giveaways || {};
 const GIVEAWAY_INTERACTION_COOLDOWN = 1000;
 
+// Optional per-giveaway fixed winners.
+// This data is read from the giveaway object stored in the database.
+// Example in Railway JSON:
+// "fixedWinners": ["123456789012345678", "987654321098765432"]
+// A fixed winner is only accepted if that Discord user is already in participants.
+
+
 function getGiveawayInteractionKey(userId, giveawayId) {
     return `giveaway:${userId}:${giveawayId}`;
 }
@@ -216,12 +223,12 @@ export function createGiveawayButtons(ended = false) {
     }
 }
 
-export function selectWinners(participants, winnerCount) {
+export function selectWinners(participants, winnerCount, fixedWinners = []) {
     if (!Array.isArray(participants) || participants.length === 0) {
         return [];
     }
 
-    const uniqueParticipants = [...new Set(participants)];
+    const uniqueParticipants = [...new Set(participants.map(String))];
 
     if (!Number.isInteger(winnerCount) || winnerCount < 1) {
         throw new TitanBotError(
@@ -233,15 +240,31 @@ export function selectWinners(participants, winnerCount) {
     }
 
     const requested = Math.min(winnerCount, uniqueParticipants.length);
-    
+
     try {
-        
-        const shuffled = [...uniqueParticipants];
+        // Only configured fixed winners who actually joined are eligible.
+        const validFixedWinners = Array.isArray(fixedWinners)
+            ? [...new Set(fixedWinners.map(String))]
+                .filter(userId => uniqueParticipants.includes(userId))
+                .slice(0, requested)
+            : [];
+
+        // Fixed winners must not be selected again by the random draw.
+        const randomPool = uniqueParticipants.filter(
+            userId => !validFixedWinners.includes(userId)
+        );
+
+        const randomWinnerCount = requested - validFixedWinners.length;
+        const shuffled = [...randomPool];
+
         for (let i = shuffled.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
             [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
         }
-        return shuffled.slice(0, requested);
+
+        const randomWinners = shuffled.slice(0, randomWinnerCount);
+
+        return [...validFixedWinners, ...randomWinners];
     } catch (error) {
         logger.error('Error selecting winners:', error);
         throw new TitanBotError(
@@ -290,7 +313,11 @@ export async function endGiveaway(client, giveaway, guildId, endedBy) {
         }
 
         const participants = giveaway.participants || [];
-        const winners = selectWinners(participants, giveaway.winnerCount || 1);
+        const winners = selectWinners(
+            participants,
+            giveaway.winnerCount || 1,
+            giveaway.fixedWinners
+        );
 
         const updatedGiveaway = {
             ...giveaway,
@@ -363,7 +390,11 @@ export async function checkGiveaways(client) {
         }
 
         const participants = giveaway.participants || [];
-        const winners = selectWinners(participants, giveaway.winnerCount || 1);
+        const winners = selectWinners(
+            participants,
+            giveaway.winnerCount || 1,
+            giveaway.fixedWinners
+        );
 
         const winnerMentions = winners.length > 0
           ? winners.map(id => `<@${id}>`).join(', ')
