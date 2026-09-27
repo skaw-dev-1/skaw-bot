@@ -106,6 +106,7 @@ export default {
             endTime: endTime,
             endsAt: endTime,
             winnerCount: winnerCount,
+            fixedWinners: [],
             participants: [],
             isEnded: false,
             ended: false,
