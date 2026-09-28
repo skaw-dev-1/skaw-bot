@@ -2,7 +2,7 @@
 //
 // TitanBot's generic interaction loader is startup-based. The Auto Message
 // flow is created dynamically from /automessage, so we register ONE direct
-// interactionCreate listener per Client and route only our v10 custom IDs.
+// interactionCreate listener per Client and route only our v10/v12 custom IDs.
 // This avoids relying on mutating client.buttons/client.selectMenus/client.modals
 // after startup, which can be missed by a dispatcher that uses startup snapshots.
 
@@ -62,6 +62,6 @@ export function ensureAutoMessageInteractionHandlers(client, command) {
 
     client.on(Events.InteractionCreate, listener);
     registeredClients.add(client);
-    logger.info('SKAW Auto Message v10 direct interaction router registered.');
+    logger.info('SKAW Auto Message direct interaction router registered.');
     return true;
 }
