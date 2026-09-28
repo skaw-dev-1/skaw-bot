@@ -5,6 +5,7 @@ import { TitanBotError, ErrorTypes } from '../../utils/errorHandler.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import {
     formatDateTime,
+    buildAutoMessagePayload,
     getAutoMessage,
     getGuildAutoMessages,
     saveGuildAutoMessages,
@@ -128,6 +129,7 @@ export default {
                         fields: [
                             { name: 'Channel', value: `<#${schedule.channelId}>`, inline: true },
                             { name: 'Status', value: schedule.enabled ? 'Enabled' : 'Disabled', inline: true },
+                            { name: 'Type', value: schedule.messageType === 'embed' ? 'Embed Message' : 'Normal Text Message', inline: true },
                             { name: 'Interval', value: formatInterval(schedule.intervalMs, schedule.scheduleType), inline: true },
                             { name: 'Start', value: formatDateTime(schedule.startAt, schedule.timezone), inline: true },
                             { name: 'Next', value: schedule.nextRunAt ? formatDateTime(schedule.nextRunAt, schedule.timezone) : '—', inline: true },
@@ -191,7 +193,7 @@ export default {
                 }
 
                 await assertCanSend(channel, interaction.guild);
-                const sent = await channel.send({ content: schedule.message });
+                const sent = await channel.send(buildAutoMessagePayload(schedule));
 
                 return InteractionHelper.safeReply(interaction, {
                     embeds: [successEmbed('Auto Message Test Sent ✅', `Message sent to ${channel}.\nMessage ID: \`${sent.id}\``)],
