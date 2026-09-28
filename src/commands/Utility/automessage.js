@@ -31,6 +31,14 @@ import {
 
 const CREATE_MODAL_ID = 'skaw_am_v8_create_modal';
 const END_MODAL_ID = 'skaw_am_v8_end_modal';
+const CHANNEL_ID = 'skaw_am_v8_channel';
+const MESSAGE_ID = 'skaw_am_v8_message';
+const START_DATE_ID = 'skaw_am_v8_start_date';
+const START_HOUR_ID = 'skaw_am_v8_start_hour';
+const START_MINUTE_ID = 'skaw_am_v8_start_minute';
+const END_DATE_ID = 'skaw_am_v8_end_date';
+const END_HOUR_ID = 'skaw_am_v8_end_hour';
+const END_MINUTE_ID = 'skaw_am_v8_end_minute';
 const DRAFT_TTL_MS = 15 * 60 * 1000;
 const DATE_OPTION_COUNT = 25;
 const drafts = new Map();
@@ -210,7 +218,7 @@ function makeTextLabel(label, description, component) {
 
 function makeChannelLabel(draft) {
     const channelSelect = new ChannelSelectMenuBuilder()
-        .setCustomId('skaw_am_v8_channel')
+        .setCustomId(CHANNEL_ID)
         .setPlaceholder(draft?.channelId ? 'Channel selected' : 'Select a channel')
         .setChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
         .setMinValues(1)
@@ -245,7 +253,7 @@ function showCreateModal(draft = null) {
     const startMinute = draft?.startMinute ?? defaults.minute;
 
     const messageInput = new TextInputBuilder()
-        .setCustomId('skaw_am_v8_message')
+        .setCustomId(MESSAGE_ID)
         .setPlaceholder('Message to send automatically')
         .setStyle(TextInputStyle.Paragraph)
         .setMaxLength(2000)
@@ -254,18 +262,18 @@ function showCreateModal(draft = null) {
     if (draft?.message) messageInput.setValue(draft.message);
 
     const startDateSelect = new StringSelectMenuBuilder()
-        .setCustomId('skaw_am_v8_start_date')
+        .setCustomId(START_DATE_ID)
         .setPlaceholder('Select start date')
         .setRequired(true)
         .addOptions(buildDateOptions(dateKeyFromDate(new Date()), startDate));
 
     const startHourSelect = new StringSelectMenuBuilder()
-        .setCustomId('skaw_am_v8_start_hour')
+        .setCustomId(START_HOUR_ID)
         .setPlaceholder('Select start hour')
         .setRequired(true)
         .addOptions(buildHourOptions(startHour));
 
-    const startMinuteInput = buildMinuteInput('start_minute', startMinute);
+    const startMinuteInput = buildMinuteInput(START_MINUTE_ID, startMinute);
 
     return new ModalBuilder()
         .setCustomId(CREATE_MODAL_ID)
@@ -297,18 +305,18 @@ function showEndModal(draft) {
     const safeBaseDate = baseDate < nowDateKey ? nowDateKey : baseDate;
 
     const endDateSelect = new StringSelectMenuBuilder()
-        .setCustomId('skaw_am_v8_end_date')
+        .setCustomId(END_DATE_ID)
         .setPlaceholder('Select end date')
         .setRequired(true)
         .addOptions(buildDateOptions(safeBaseDate, draft?.endDate));
 
     const endHourSelect = new StringSelectMenuBuilder()
-        .setCustomId('skaw_am_v8_end_hour')
+        .setCustomId(END_HOUR_ID)
         .setPlaceholder('Select end hour')
         .setRequired(true)
         .addOptions(buildHourOptions(draft?.endHour || '23'));
 
-    const endMinuteInput = buildMinuteInput('end_minute', draft?.endMinute ?? '00');
+    const endMinuteInput = buildMinuteInput(END_MINUTE_ID, draft?.endMinute ?? '00');
 
     return new ModalBuilder()
         .setCustomId(END_MODAL_ID)
@@ -564,11 +572,11 @@ const automessageCommand = {
                 const channel = getSelectedChannel(interaction);
                 if (!channel) throw new Error('Please select a channel.');
 
-                const message = validateMessage(interaction.fields.getTextInputValue('skaw_am_v8_message'));
-                const startDate = interaction.fields.getStringSelectValues('skaw_am_v8_start_date')?.[0];
-                const startHour = interaction.fields.getStringSelectValues('skaw_am_v8_start_hour')?.[0];
+                const message = validateMessage(interaction.fields.getTextInputValue(MESSAGE_ID));
+                const startDate = interaction.fields.getStringSelectValues(START_DATE_ID)?.[0];
+                const startHour = interaction.fields.getStringSelectValues(START_HOUR_ID)?.[0];
                 const startMinute = normalizeMinute(
-                    interaction.fields.getTextInputValue('skaw_am_v8_start_minute'),
+                    interaction.fields.getTextInputValue(START_MINUTE_ID),
                     'Start Minute',
                 );
 
@@ -608,10 +616,10 @@ const automessageCommand = {
                     throw new Error('Your Auto Message setup session expired. Run /automessage again.');
                 }
 
-                draft.endDate = interaction.fields.getStringSelectValues('skaw_am_v8_end_date')?.[0];
-                draft.endHour = interaction.fields.getStringSelectValues('skaw_am_v8_end_hour')?.[0];
+                draft.endDate = interaction.fields.getStringSelectValues(END_DATE_ID)?.[0];
+                draft.endHour = interaction.fields.getStringSelectValues(END_HOUR_ID)?.[0];
                 draft.endMinute = normalizeMinute(
-                    interaction.fields.getTextInputValue('skaw_am_v8_end_minute'),
+                    interaction.fields.getTextInputValue(END_MINUTE_ID),
                     'End Minute',
                 );
 
