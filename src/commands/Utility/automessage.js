@@ -1,5 +1,6 @@
 import {
     ActionRowBuilder,
+    EmbedBuilder,
     ButtonBuilder,
     ButtonStyle,
     ChannelSelectMenuBuilder,
@@ -27,6 +28,9 @@ import {
     parseScheduledDateTime,
     formatDateTime,
     validateMessage,
+    validateEmbedDescription,
+    validateEmbedColor,
+    validateEmbedUrl,
     startAutoMessageScheduler,
 } from '../../services/autoMessageService.js';
 
@@ -37,6 +41,13 @@ const MESSAGE_ID = 'skaw_am_v10_message';
 const START_DATE_ID = 'skaw_am_v10_start_date';
 const START_HOUR_ID = 'skaw_am_v10_start_hour';
 const START_MINUTE_ID = 'skaw_am_v10_start_minute';
+const MESSAGE_TYPE_ID = 'skaw_am_v10_message_type';
+const EMBED_MODAL_ID = 'skaw_am_v10_embed_modal';
+const EMBED_TITLE_ID = 'skaw_am_v10_embed_title';
+const EMBED_DESCRIPTION_ID = 'skaw_am_v10_embed_description';
+const EMBED_COLOR_ID = 'skaw_am_v10_embed_color';
+const EMBED_FOOTER_ID = 'skaw_am_v10_embed_footer';
+const EMBED_IMAGE_ID = 'skaw_am_v10_embed_image';
 const END_DATE_ID = 'skaw_am_v10_end_date';
 const END_HOUR_ID = 'skaw_am_v10_end_hour';
 const END_MINUTE_ID = 'skaw_am_v10_end_minute';
@@ -249,6 +260,108 @@ function buildMinuteInput(customId, value = '00') {
     return input;
 }
 
+function messageTypeSelect(draft) {
+    return new StringSelectMenuBuilder()
+        .setCustomId(MESSAGE_TYPE_ID)
+        .setPlaceholder('Select message type')
+        .setMinValues(1)
+        .setMaxValues(1)
+        .addOptions([
+            {
+                label: 'Normal Text Message',
+                description: 'Send the message as a normal Discord message.',
+                value: 'text',
+                default: (draft?.messageType || 'text') === 'text',
+            },
+            {
+                label: 'Embed Message',
+                description: 'Send the message as a Discord embed.',
+                value: 'embed',
+                default: draft?.messageType === 'embed',
+            },
+        ]);
+}
+
+function optionalTextInput(customId, placeholder, value = '', maxLength = 2000) {
+    const input = new TextInputBuilder()
+        .setCustomId(customId)
+        .setPlaceholder(placeholder)
+        .setStyle(TextInputStyle.Short)
+        .setMaxLength(maxLength)
+        .setRequired(false);
+
+    if (value) input.setValue(value);
+    return input;
+}
+
+function showEmbedModal(draft = {}) {
+    const titleInput = optionalTextInput(
+        EMBED_TITLE_ID,
+        'Optional embed title',
+        draft.embed?.title || '',
+        256,
+    );
+
+    const descriptionInput = new TextInputBuilder()
+        .setCustomId(EMBED_DESCRIPTION_ID)
+        .setPlaceholder('Embed description / message')
+        .setStyle(TextInputStyle.Paragraph)
+        .setMaxLength(4096)
+        .setRequired(true);
+    descriptionInput.setValue(draft.embed?.description || draft.message || '');
+
+    const colorInput = optionalTextInput(
+        EMBED_COLOR_ID,
+        'Example: #1A9EF3 (optional)',
+        draft.embed?.color || '',
+        7,
+    );
+
+    const footerInput = optionalTextInput(
+        EMBED_FOOTER_ID,
+        'Optional footer text',
+        draft.embed?.footer || '',
+        2048,
+    );
+
+    const imageInput = optionalTextInput(
+        EMBED_IMAGE_ID,
+        'Optional HTTPS image URL',
+        draft.embed?.imageUrl || '',
+        1000,
+    );
+
+    return new ModalBuilder()
+        .setCustomId(EMBED_MODAL_ID)
+        .setTitle('Configure Embed Message')
+        .addLabelComponents(
+            makeTextLabel('Title', 'Optional.', titleInput),
+            makeTextLabel('Description', 'The main embed text. Emoji are fully supported.', descriptionInput),
+            makeTextLabel('Color', 'Optional 6-digit hex color.', colorInput),
+            makeTextLabel('Footer', 'Optional.', footerInput),
+            makeTextLabel('Image URL', 'Optional HTTP/HTTPS image URL.', imageInput),
+        );
+}
+
+function buildEmbedPreview(draft) {
+    if (draft.messageType !== 'embed') return null;
+
+    const embedData = draft.embed || {};
+    const embed = new EmbedBuilder();
+    if (embedData.title) embed.setTitle(embedData.title);
+    embed.setDescription(embedData.description || draft.message || '');
+    if (embedData.color) {
+        try {
+            embed.setColor(Number.parseInt(embedData.color.slice(1), 16));
+        } catch {
+            // Keep preview without color if it cannot be parsed. Final validation handles it.
+        }
+    }
+    if (embedData.footer) embed.setFooter({ text: embedData.footer });
+    if (embedData.imageUrl) embed.setImage(embedData.imageUrl);
+    return embed.toJSON();
+}
+
 function showCreateModal(draft = null) {
     const defaults = getNextHourDefaults();
     const startDate = draft?.startDate || defaults.date;
@@ -422,20 +535,24 @@ function buildDraftPanel(draft) {
         embeds: [{
             title: 'Create an Auto Message',
             description: draft.intervalString
-                ? 'Review the schedule below. You can edit the details, change the repeat interval, set an optional end time, or create the schedule.'
-                : 'Choose the repeat interval below before creating the schedule. You can also edit the details or add an optional end time.',
+                ? 'Review the schedule below. You can edit the details, choose the message type, change the repeat interval, set an optional end time, or create the schedule.'
+                : 'Choose the message type and repeat interval below before creating the schedule.',
             fields: [
                 { name: 'Channel', value: `<#${draft.channelId}>`, inline: true },
+                { name: 'Message Type', value: draft.messageType === 'embed' ? 'Embed Message' : 'Normal Text Message', inline: true },
                 { name: 'Interval', value: intervalLabel(draft.intervalString), inline: true },
                 { name: 'Start', value: startAt ? `<t:${Math.floor(startAt / 1000)}:F>` : 'Invalid', inline: true },
                 { name: 'End', value: endAt ? `<t:${Math.floor(endAt / 1000)}:F>` : 'No end time', inline: true },
-                { name: 'Message', value: draft.message ? truncate(draft.message, 1024) : 'Not set', inline: false },
+                { name: draft.messageType === 'embed' ? 'Embed Description' : 'Message', value: draft.message ? truncate(draft.message, 1024) : 'Not set', inline: false },
+                ...(draft.messageType === 'embed' && draft.embed?.title ? [{ name: 'Embed Title', value: truncate(draft.embed.title, 256), inline: false }] : []),
             ],
+            ...(draft.messageType === 'embed' && buildEmbedPreview(draft) ? { embeds: [{ title: 'Create an Auto Message', description: 'Review the configuration below.', fields: [], footer: { text: `Timezone: ${AUTO_MESSAGE_DEFAULT_TIMEZONE}` } }, buildEmbedPreview(draft)] } : {}),
             footer: { text: `Timezone: ${AUTO_MESSAGE_DEFAULT_TIMEZONE}` },
         }],
         components: [
+            new ActionRowBuilder().addComponents(messageTypeSelect(draft)),
             new ActionRowBuilder().addComponents(intervalSelect(draft)),
-            new ActionRowBuilder().addComponents(editButton, endButton, clearEndButton),
+            new ActionRowBuilder().addComponents(editButton, ...(draft.messageType === 'embed' ? [new ButtonBuilder().setCustomId('skaw_am_v10_edit_embed').setLabel('Edit Embed').setStyle(ButtonStyle.Primary)] : []), endButton, clearEndButton),
             new ActionRowBuilder().addComponents(createButton, cancelButton),
         ],
     };
@@ -487,7 +604,9 @@ async function createScheduleFromDraft(interaction, draft) {
     const schedule = buildAutoMessageData({
         guildId: interaction.guildId,
         channelId: channel.id,
-        message: validateMessage(draft.message),
+        message: draft.messageType === 'embed' ? validateEmbedDescription(draft.embed?.description || draft.message) : validateMessage(draft.message),
+        messageType: draft.messageType || 'text',
+        embed: draft.messageType === 'embed' ? draft.embed : null,
         startString: `${draft.startDate} ${draft.startHour}:${draft.startMinute}`,
         intervalString: draft.intervalString,
         endString: endAt !== null ? `${draft.endDate} ${draft.endHour}:${draft.endMinute}` : null,
@@ -564,7 +683,7 @@ const automessageCommand = {
     },
 
     async handleModal(interaction) {
-        if (interaction.customId !== CREATE_MODAL_ID && interaction.customId !== END_MODAL_ID) {
+        if (![CREATE_MODAL_ID, END_MODAL_ID, EMBED_MODAL_ID].includes(interaction.customId)) {
             return false;
         }
 
@@ -597,6 +716,14 @@ const automessageCommand = {
                     userId: interaction.user.id,
                     channelId: channel.id,
                     message,
+                    messageType: previous?.messageType || 'text',
+                    embed: previous?.embed || {
+                        title: '',
+                        description: message,
+                        color: '',
+                        footer: '',
+                        imageUrl: '',
+                    },
                     startDate,
                     startHour,
                     startMinute,
@@ -645,6 +772,24 @@ const automessageCommand = {
                 return interaction.editReply(buildDraftPanel(draft));
             }
 
+            if (interaction.customId === EMBED_MODAL_ID) {
+                const draft = getDraft(interaction);
+                if (!draft) throw new Error('Your Auto Message setup session expired. Run /automessage again.');
+
+                const title = interaction.fields.getTextInputValue(EMBED_TITLE_ID)?.trim() || '';
+                const description = validateEmbedDescription(interaction.fields.getTextInputValue(EMBED_DESCRIPTION_ID));
+                const color = validateEmbedColor(interaction.fields.getTextInputValue(EMBED_COLOR_ID)?.trim() || '');
+                const footer = interaction.fields.getTextInputValue(EMBED_FOOTER_ID)?.trim() || '';
+                const imageUrl = validateEmbedUrl(interaction.fields.getTextInputValue(EMBED_IMAGE_ID)?.trim() || '');
+
+                draft.messageType = 'embed';
+                draft.message = description;
+                draft.embed = { title, description, color, footer, imageUrl };
+                setDraft(interaction, draft);
+
+                return interaction.editReply(buildDraftPanel(draft));
+            }
+
             throw new Error('Unknown Auto Message modal.');
         } catch (error) {
             logger.error('Auto Message modal submit error:', error);
@@ -661,8 +806,10 @@ const automessageCommand = {
 
     async handleComponent(interaction) {
         const handledIds = new Set([
+            'skaw_am_v10_message_type',
             'skaw_am_v10_interval',
             'skaw_am_v10_edit',
+            'skaw_am_v10_edit_embed',
             'skaw_am_v10_set_end',
             'skaw_am_v10_clear_end',
             'skaw_am_v10_create',
@@ -683,6 +830,24 @@ const automessageCommand = {
                 });
             }
 
+            if (interaction.customId === MESSAGE_TYPE_ID) {
+                const selected = interaction.values?.[0];
+                if (!['text', 'embed'].includes(selected)) throw new Error('Invalid message type selection.');
+
+                draft.messageType = selected;
+                if (selected === 'embed') {
+                    draft.embed = {
+                        title: draft.embed?.title || '',
+                        description: draft.embed?.description || draft.message,
+                        color: draft.embed?.color || '',
+                        footer: draft.embed?.footer || '',
+                        imageUrl: draft.embed?.imageUrl || '',
+                    };
+                }
+                setDraft(interaction, draft);
+                return interaction.update(buildDraftPanel(draft));
+            }
+
             if (interaction.customId === 'skaw_am_v10_interval') {
                 const selected = interaction.values?.[0];
                 if (!INTERVAL_OPTIONS.some(([value]) => value === selected)) {
@@ -697,6 +862,12 @@ const automessageCommand = {
             if (interaction.customId === 'skaw_am_v10_edit') {
                 setDraft(interaction, draft);
                 return interaction.showModal(showCreateModal(draft));
+            }
+
+            if (interaction.customId === 'skaw_am_v10_edit_embed') {
+                if (draft.messageType !== 'embed') throw new Error('Select Embed Message first.');
+                setDraft(interaction, draft);
+                return interaction.showModal(showEmbedModal(draft));
             }
 
             if (interaction.customId === 'skaw_am_v10_set_end') {
