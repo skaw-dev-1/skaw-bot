@@ -29,16 +29,16 @@ import {
     validateMessage,
 } from '../../services/autoMessageService.js';
 
-const CREATE_MODAL_ID = 'skaw_am_v8_create_modal';
-const END_MODAL_ID = 'skaw_am_v8_end_modal';
-const CHANNEL_ID = 'skaw_am_v8_channel';
-const MESSAGE_ID = 'skaw_am_v8_message';
-const START_DATE_ID = 'skaw_am_v8_start_date';
-const START_HOUR_ID = 'skaw_am_v8_start_hour';
-const START_MINUTE_ID = 'skaw_am_v8_start_minute';
-const END_DATE_ID = 'skaw_am_v8_end_date';
-const END_HOUR_ID = 'skaw_am_v8_end_hour';
-const END_MINUTE_ID = 'skaw_am_v8_end_minute';
+const CREATE_MODAL_ID = 'skaw_am_v10_create_modal';
+const END_MODAL_ID = 'skaw_am_v10_end_modal';
+const CHANNEL_ID = 'skaw_am_v10_channel';
+const MESSAGE_ID = 'skaw_am_v10_message';
+const START_DATE_ID = 'skaw_am_v10_start_date';
+const START_HOUR_ID = 'skaw_am_v10_start_hour';
+const START_MINUTE_ID = 'skaw_am_v10_start_minute';
+const END_DATE_ID = 'skaw_am_v10_end_date';
+const END_HOUR_ID = 'skaw_am_v10_end_hour';
+const END_MINUTE_ID = 'skaw_am_v10_end_minute';
 const DRAFT_TTL_MS = 15 * 60 * 1000;
 const DATE_OPTION_COUNT = 25;
 const drafts = new Map();
@@ -61,6 +61,8 @@ const INTERVAL_OPTIONS = [
     ['1d', 'Every day'],
     ['2d', 'Every 2 days'],
     ['3d', 'Every 3 days'],
+    ['4d', 'Every 4 days'],
+    ['7d', 'Every 7 days'],
     ['1w', 'Every week'],
     ['2w', 'Every 2 weeks'],
     ['once', 'Send once only'],
@@ -368,7 +370,7 @@ function intervalSelect(draft) {
     // IMPORTANT: this select is rendered in a normal message ActionRow,
     // not inside a modal Label. `required` is a modal-only property.
     return new StringSelectMenuBuilder()
-        .setCustomId('skaw_am_v8_interval')
+        .setCustomId('skaw_am_v10_interval')
         .setPlaceholder('Select how often the message should repeat')
         .setMinValues(1)
         .setMaxValues(1)
@@ -389,29 +391,29 @@ function buildDraftPanel(draft) {
     const endAt = draft.endDate ? parseDraftDateTime(draft, 'end') : null;
 
     const editButton = new ButtonBuilder()
-        .setCustomId('skaw_am_v8_edit')
+        .setCustomId('skaw_am_v10_edit')
         .setLabel('Edit Details')
         .setStyle(ButtonStyle.Secondary);
 
     const endButton = new ButtonBuilder()
-        .setCustomId('skaw_am_v8_set_end')
+        .setCustomId('skaw_am_v10_set_end')
         .setLabel(draft.endDate ? 'Edit End Time' : 'Set End Time')
         .setStyle(ButtonStyle.Secondary);
 
     const clearEndButton = new ButtonBuilder()
-        .setCustomId('skaw_am_v8_clear_end')
+        .setCustomId('skaw_am_v10_clear_end')
         .setLabel('Clear End')
         .setStyle(ButtonStyle.Secondary)
         .setDisabled(!draft.endDate);
 
     const createButton = new ButtonBuilder()
-        .setCustomId('skaw_am_v8_create')
+        .setCustomId('skaw_am_v10_create')
         .setLabel('Create Auto Message')
         .setStyle(ButtonStyle.Success)
         .setDisabled(!draft.intervalString);
 
     const cancelButton = new ButtonBuilder()
-        .setCustomId('skaw_am_v8_cancel')
+        .setCustomId('skaw_am_v10_cancel')
         .setLabel('Cancel')
         .setStyle(ButtonStyle.Danger);
 
@@ -454,7 +456,7 @@ async function assertBotCanSend(channel, guild) {
 
 function getSelectedChannel(interaction) {
     const selected = interaction.fields.getSelectedChannels(
-        'skaw_am_v8_channel',
+        CHANNEL_ID,
         true,
         [ChannelType.GuildText, ChannelType.GuildAnnouncement],
     );
@@ -654,12 +656,12 @@ const automessageCommand = {
 
     async handleComponent(interaction) {
         const handledIds = new Set([
-            'skaw_am_v8_interval',
-            'skaw_am_v8_edit',
-            'skaw_am_v8_set_end',
-            'skaw_am_v8_clear_end',
-            'skaw_am_v8_create',
-            'skaw_am_v8_cancel',
+            'skaw_am_v10_interval',
+            'skaw_am_v10_edit',
+            'skaw_am_v10_set_end',
+            'skaw_am_v10_clear_end',
+            'skaw_am_v10_create',
+            'skaw_am_v10_cancel',
         ]);
         if (!handledIds.has(interaction.customId)) {
             return false;
@@ -676,7 +678,7 @@ const automessageCommand = {
                 });
             }
 
-            if (interaction.customId === 'skaw_am_v8_interval') {
+            if (interaction.customId === 'skaw_am_v10_interval') {
                 const selected = interaction.values?.[0];
                 if (!INTERVAL_OPTIONS.some(([value]) => value === selected)) {
                     throw new Error('Invalid interval selection.');
@@ -687,17 +689,17 @@ const automessageCommand = {
                 return interaction.update(buildDraftPanel(draft));
             }
 
-            if (interaction.customId === 'skaw_am_v8_edit') {
+            if (interaction.customId === 'skaw_am_v10_edit') {
                 setDraft(interaction, draft);
                 return interaction.showModal(showCreateModal(draft));
             }
 
-            if (interaction.customId === 'skaw_am_v8_set_end') {
+            if (interaction.customId === 'skaw_am_v10_set_end') {
                 setDraft(interaction, draft);
                 return interaction.showModal(showEndModal(draft));
             }
 
-            if (interaction.customId === 'skaw_am_v8_clear_end') {
+            if (interaction.customId === 'skaw_am_v10_clear_end') {
                 draft.endDate = null;
                 draft.endHour = null;
                 draft.endMinute = null;
@@ -705,7 +707,7 @@ const automessageCommand = {
                 return interaction.update(buildDraftPanel(draft));
             }
 
-            if (interaction.customId === 'skaw_am_v8_create') {
+            if (interaction.customId === 'skaw_am_v10_create') {
                 if (!draft.intervalString) {
                     throw new Error('Please select an interval before creating the schedule.');
                 }
@@ -721,7 +723,7 @@ const automessageCommand = {
                 });
             }
 
-            if (interaction.customId === 'skaw_am_v8_cancel') {
+            if (interaction.customId === 'skaw_am_v10_cancel') {
                 deleteDraft(interaction);
                 return interaction.update({
                     embeds: [{
