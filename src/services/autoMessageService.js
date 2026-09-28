@@ -2,25 +2,48 @@
 // Persistent scheduled auto-message service for TitanBot / SKAW GROUP.
 // Uses the existing client.db key-value interface.
 
+import { EmbedBuilder } from 'discord.js';
 import { logger } from '../utils/logger.js';
 
 const AUTO_MESSAGE_KEY = (guildId) => `guild:${guildId}:auto_messages`;
 const DEFAULT_TIMEZONE = 'Asia/Jakarta';
 const DISCORD_MAX_MESSAGE_LENGTH = 2000;
+const DISCORD_EMBED_DESCRIPTION_LIMIT = 4096;
 const MIN_INTERVAL_MS = 60 * 1000;
 const DEFAULT_SCHEDULER_INTERVAL_MS = 30 * 1000;
 
 const schedulerHandles = new WeakMap();
 
+function normalizeEmbed(embed = {}, fallbackDescription = '') {
+    const normalized = {
+        title: typeof embed.title === 'string' ? embed.title.trim() : '',
+        description: typeof embed.description === 'string' ? embed.description : '',
+        color: typeof embed.color === 'string' ? embed.color.trim() : '',
+        footer: typeof embed.footer === 'string' ? embed.footer.trim() : '',
+        imageUrl: typeof embed.imageUrl === 'string' ? embed.imageUrl.trim() : '',
+    };
+
+    if (!normalized.description && fallbackDescription) {
+        normalized.description = fallbackDescription;
+    }
+
+    return normalized;
+}
+
 function normalizeSchedule(record = {}) {
     const startAt = Number(record.startAt);
     const rawNext = record.nextRunAt == null ? null : Number(record.nextRunAt);
+
+    const message = String(record.message || '');
+    const messageType = record.messageType === 'embed' ? 'embed' : 'text';
 
     return {
         id: String(record.id || ''),
         guildId: String(record.guildId || ''),
         channelId: String(record.channelId || ''),
-        message: String(record.message || ''),
+        message,
+        messageType,
+        embed: normalizeEmbed(record.embed, messageType === 'embed' ? message : ''),
         timezone: record.timezone || DEFAULT_TIMEZONE,
         scheduleType: record.scheduleType || (record.intervalMs == null ? 'once' : 'interval'),
         intervalMs: record.intervalMs == null ? null : Number(record.intervalMs),
@@ -56,7 +79,7 @@ export function parseInterval(intervalString) {
 
     const match = value.match(/^(\d+)(s|m|h|d|w)$/i);
     if (!match) {
-        throw new Error('Invalid interval. Use 5m, 10m, 30m, 1h, 2h, 6h, 12h, 1d, 1w, or once.');
+        throw new Error('Invalid interval. Use 1m, 5m, 30m, 1h, 1d, 1w, or once.');
     }
 
     const amount = Number(match[1]);
@@ -172,7 +195,6 @@ export function parseScheduledDateTime(value, timeZone = DEFAULT_TIMEZONE) {
 
     const raw = value.trim();
 
-    // ISO timestamps with an explicit offset are already absolute instants.
     if (/^\d{4}-\d{2}-\d{2}T/.test(raw) && /(?:Z|[+-]\d{2}:?\d{2})$/.test(raw)) {
         const timestamp = Date.parse(raw);
         if (!Number.isNaN(timestamp)) return timestamp;
@@ -193,14 +215,9 @@ export function parseScheduledDateTime(value, timeZone = DEFAULT_TIMEZONE) {
         parts.second,
     );
 
-    // IMPORTANT: calculate the timezone offset from the wall-clock candidate,
-    // then subtract that offset ONCE. The previous implementation subtracted
-    // the offset twice, turning e.g. 18:45 Asia/Jakarta into 11:45 local time.
     const initialOffset = getTimeZoneOffsetMs(new Date(wallClockAsUtc), zone);
     let timestamp = wallClockAsUtc - initialOffset;
 
-    // If the first offset lands on a DST boundary, recalculate from the same
-    // original wall-clock value rather than subtracting the offset twice.
     const correctedOffset = getTimeZoneOffsetMs(new Date(timestamp), zone);
     if (correctedOffset !== initialOffset) {
         timestamp = wallClockAsUtc - correctedOffset;
@@ -274,11 +291,50 @@ export function validateMessage(message) {
     return trimmed;
 }
 
+export function validateEmbedDescription(description) {
+    if (typeof description !== 'string') throw new Error('Embed description must be text.');
+
+    const trimmed = description.trim();
+    if (!trimmed) throw new Error('Embed description cannot be empty.');
+
+    if (trimmed.length > DISCORD_EMBED_DESCRIPTION_LIMIT) {
+        throw new Error(`Embed description must be ${DISCORD_EMBED_DESCRIPTION_LIMIT} characters or fewer.`);
+    }
+
+    return trimmed;
+}
+
+export function validateEmbedColor(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+
+    if (!/^#[0-9a-fA-F]{6}$/.test(raw)) {
+        throw new Error('Embed color must be a 6-digit hex value such as #1A9EF3.');
+    }
+
+    return raw.toUpperCase();
+}
+
+export function validateEmbedUrl(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+
+    try {
+        const url = new URL(raw);
+        if (!['http:', 'https:'].includes(url.protocol)) throw new Error();
+        return url.toString();
+    } catch {
+        throw new Error('Embed image URL must be a valid HTTP or HTTPS URL.');
+    }
+}
+
 export function buildAutoMessageData({
     id,
     guildId,
     channelId,
     message,
+    messageType = 'text',
+    embed = null,
     intervalString,
     startString,
     endString,
@@ -287,6 +343,20 @@ export function buildAutoMessageData({
 }) {
     const zone = validateTimeZone(timezone || DEFAULT_TIMEZONE);
     const intervalMs = parseInterval(intervalString);
+    const normalizedType = messageType === 'embed' ? 'embed' : 'text';
+    const cleanMessage = normalizedType === 'embed'
+        ? validateEmbedDescription(message)
+        : validateMessage(message);
+    const cleanEmbed = normalizedType === 'embed'
+        ? normalizeEmbed(embed, cleanMessage)
+        : normalizeEmbed();
+
+    cleanEmbed.title = cleanEmbed.title.slice(0, 256);
+    cleanEmbed.footer = cleanEmbed.footer.slice(0, 2048);
+    cleanEmbed.color = validateEmbedColor(cleanEmbed.color);
+    cleanEmbed.imageUrl = validateEmbedUrl(cleanEmbed.imageUrl);
+    cleanEmbed.description = validateEmbedDescription(cleanEmbed.description);
+
     const startAt = parseScheduledDateTime(startString, zone);
     const endAt = endString ? parseScheduledDateTime(endString, zone) : null;
 
@@ -304,7 +374,9 @@ export function buildAutoMessageData({
         id: id || createAutoMessageId(),
         guildId: String(guildId),
         channelId: String(channelId),
-        message: validateMessage(message),
+        message: cleanMessage,
+        messageType: normalizedType,
+        embed: cleanEmbed,
         timezone: zone,
         scheduleType: intervalMs === null ? 'once' : 'interval',
         intervalMs,
@@ -318,6 +390,29 @@ export function buildAutoMessageData({
         createdBy: createdBy ? String(createdBy) : null,
         updatedAt: null,
     };
+}
+
+function parseHexColor(color) {
+    const clean = String(color || '').trim();
+    if (!clean) return null;
+    return Number.parseInt(clean.slice(1), 16);
+}
+
+export function buildAutoMessagePayload(schedule) {
+    if (!schedule || schedule.messageType !== 'embed') {
+        return { content: String(schedule?.message || '') };
+    }
+
+    const embedData = normalizeEmbed(schedule.embed, schedule.message);
+    const embed = new EmbedBuilder();
+
+    if (embedData.title) embed.setTitle(embedData.title.slice(0, 256));
+    if (embedData.description) embed.setDescription(validateEmbedDescription(embedData.description));
+    if (embedData.color) embed.setColor(parseHexColor(validateEmbedColor(embedData.color)));
+    if (embedData.footer) embed.setFooter({ text: embedData.footer.slice(0, 2048) });
+    if (embedData.imageUrl) embed.setImage(validateEmbedUrl(embedData.imageUrl));
+
+    return { embeds: [embed] };
 }
 
 let schedulerRunning = false;
@@ -343,7 +438,6 @@ export function startAutoMessageScheduler(client, intervalMs = DEFAULT_SCHEDULER
         });
     };
 
-    // Run immediately so a due schedule does not have to wait for the first interval.
     tick();
 
     const timer = setInterval(tick, safeInterval);
@@ -415,7 +509,19 @@ export async function runAutoMessages(client) {
                         continue;
                     }
 
-                    const sent = await channel.send({ content: schedule.message }).catch(error => {
+                    let payload;
+                    try {
+                        payload = buildAutoMessagePayload(schedule);
+                    } catch (payloadError) {
+                        logger.error(`Auto Message ${schedule.id} has invalid message/embeds: ${payloadError.message}`);
+                        schedule.enabled = false;
+                        schedule.nextRunAt = null;
+                        schedule.updatedAt = new Date().toISOString();
+                        changed = true;
+                        continue;
+                    }
+
+                    const sent = await channel.send(payload).catch(error => {
                         logger.warn(`Auto Message ${schedule.id} failed to send in guild ${guild.id}: ${error.message}`);
                         return null;
                     });
@@ -431,10 +537,6 @@ export async function runAutoMessages(client) {
                         schedule.enabled = false;
                         schedule.nextRunAt = null;
                     } else {
-                        // Keep the schedule aligned to its intended interval rather than
-                        // accumulating cron/check delays. If the bot was offline for one or
-                        // more intervals, advance to the first future occurrence without
-                        // sending a burst of catch-up messages.
                         let nextRunAt = schedule.nextRunAt + schedule.intervalMs;
                         while (nextRunAt <= now) {
                             nextRunAt += schedule.intervalMs;
