@@ -35,15 +35,21 @@ function resolveCustomEmojiSyntax(text, guild) {
     });
 }
 
-function normalizeEmbed(embed = {}, fallbackDescription = '') {
+function normalizeEmbed(embed, fallbackDescription = '') {
+    // Text schedules intentionally store `embed: null`. Never dereference the
+    // value directly: normalize null/invalid values to an empty object first.
+    const source = embed && typeof embed === 'object' && !Array.isArray(embed)
+        ? embed
+        : {};
+
     const normalized = {
-        title: typeof embed.title === 'string' ? embed.title.trim() : '',
-        description: typeof embed.description === 'string' ? embed.description : '',
-        color: typeof embed.color === 'string' && embed.color.trim()
-            ? embed.color.trim()
+        title: typeof source.title === 'string' ? source.title.trim() : '',
+        description: typeof source.description === 'string' ? source.description : '',
+        color: typeof source.color === 'string' && source.color.trim()
+            ? source.color.trim()
             : SKAW_DEFAULT_EMBED_COLOR,
-        footer: typeof embed.footer === 'string' ? embed.footer.trim() : '',
-        imageUrl: typeof embed.imageUrl === 'string' ? embed.imageUrl.trim() : '',
+        footer: typeof source.footer === 'string' ? source.footer.trim() : '',
+        imageUrl: typeof source.imageUrl === 'string' ? source.imageUrl.trim() : '',
     };
 
     if (!normalized.description && fallbackDescription) {
@@ -66,7 +72,10 @@ function normalizeSchedule(record = {}) {
         channelId: String(record.channelId || ''),
         message,
         messageType,
-        embed: normalizeEmbed(record.embed, messageType === 'embed' ? message : ''),
+        // Keep text schedules clean and avoid treating `null` as an embed.
+        embed: messageType === 'embed'
+            ? normalizeEmbed(record.embed, message)
+            : null,
         timezone: record.timezone || DEFAULT_TIMEZONE,
         scheduleType: record.scheduleType || (record.intervalMs == null ? 'once' : 'interval'),
         intervalMs: record.intervalMs == null ? null : Number(record.intervalMs),
