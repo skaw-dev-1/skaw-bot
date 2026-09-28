@@ -192,7 +192,6 @@ function showCreateModal(draft = null) {
 
     const messageInput = new TextInputBuilder()
         .setCustomId('message')
-        .setLabel('Message')
         .setPlaceholder('Message to send automatically')
         .setStyle(TextInputStyle.Paragraph)
         .setRequired(true);
