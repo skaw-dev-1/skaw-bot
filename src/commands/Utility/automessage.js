@@ -18,6 +18,7 @@ import { errorEmbed } from '../../utils/embeds.js';
 import { logger } from '../../utils/logger.js';
 import { TitanBotError, ErrorTypes } from '../../utils/errorHandler.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
+import { ensureAutoMessageInteractionHandlers } from '../../services/autoMessageInteractionHandlers.js';
 import {
     AUTO_MESSAGE_DEFAULT_TIMEZONE,
     buildAutoMessageData,
@@ -28,8 +29,8 @@ import {
     validateMessage,
 } from '../../services/autoMessageService.js';
 
-const CREATE_MODAL_ID = 'automessage_create_modal';
-const END_MODAL_ID = 'automessage_end_modal';
+const CREATE_MODAL_ID = 'skaw_am_v8_create_modal';
+const END_MODAL_ID = 'skaw_am_v8_end_modal';
 const DRAFT_TTL_MS = 15 * 60 * 1000;
 const DATE_OPTION_COUNT = 25;
 const drafts = new Map();
@@ -209,7 +210,7 @@ function makeTextLabel(label, description, component) {
 
 function makeChannelLabel(draft) {
     const channelSelect = new ChannelSelectMenuBuilder()
-        .setCustomId('channel')
+        .setCustomId('skaw_am_v8_channel')
         .setPlaceholder(draft?.channelId ? 'Channel selected' : 'Select a channel')
         .setChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
         .setMinValues(1)
@@ -244,7 +245,7 @@ function showCreateModal(draft = null) {
     const startMinute = draft?.startMinute ?? defaults.minute;
 
     const messageInput = new TextInputBuilder()
-        .setCustomId('message')
+        .setCustomId('skaw_am_v8_message')
         .setPlaceholder('Message to send automatically')
         .setStyle(TextInputStyle.Paragraph)
         .setMaxLength(2000)
@@ -253,13 +254,13 @@ function showCreateModal(draft = null) {
     if (draft?.message) messageInput.setValue(draft.message);
 
     const startDateSelect = new StringSelectMenuBuilder()
-        .setCustomId('start_date')
+        .setCustomId('skaw_am_v8_start_date')
         .setPlaceholder('Select start date')
         .setRequired(true)
         .addOptions(buildDateOptions(dateKeyFromDate(new Date()), startDate));
 
     const startHourSelect = new StringSelectMenuBuilder()
-        .setCustomId('start_hour')
+        .setCustomId('skaw_am_v8_start_hour')
         .setPlaceholder('Select start hour')
         .setRequired(true)
         .addOptions(buildHourOptions(startHour));
@@ -296,13 +297,13 @@ function showEndModal(draft) {
     const safeBaseDate = baseDate < nowDateKey ? nowDateKey : baseDate;
 
     const endDateSelect = new StringSelectMenuBuilder()
-        .setCustomId('end_date')
+        .setCustomId('skaw_am_v8_end_date')
         .setPlaceholder('Select end date')
         .setRequired(true)
         .addOptions(buildDateOptions(safeBaseDate, draft?.endDate));
 
     const endHourSelect = new StringSelectMenuBuilder()
-        .setCustomId('end_hour')
+        .setCustomId('skaw_am_v8_end_hour')
         .setPlaceholder('Select end hour')
         .setRequired(true)
         .addOptions(buildHourOptions(draft?.endHour || '23'));
@@ -359,7 +360,7 @@ function intervalSelect(draft) {
     // IMPORTANT: this select is rendered in a normal message ActionRow,
     // not inside a modal Label. `required` is a modal-only property.
     return new StringSelectMenuBuilder()
-        .setCustomId('automessage_interval')
+        .setCustomId('skaw_am_v8_interval')
         .setPlaceholder('Select how often the message should repeat')
         .setMinValues(1)
         .setMaxValues(1)
@@ -380,29 +381,29 @@ function buildDraftPanel(draft) {
     const endAt = draft.endDate ? parseDraftDateTime(draft, 'end') : null;
 
     const editButton = new ButtonBuilder()
-        .setCustomId('automessage_edit')
+        .setCustomId('skaw_am_v8_edit')
         .setLabel('Edit Details')
         .setStyle(ButtonStyle.Secondary);
 
     const endButton = new ButtonBuilder()
-        .setCustomId('automessage_set_end')
+        .setCustomId('skaw_am_v8_set_end')
         .setLabel(draft.endDate ? 'Edit End Time' : 'Set End Time')
         .setStyle(ButtonStyle.Secondary);
 
     const clearEndButton = new ButtonBuilder()
-        .setCustomId('automessage_clear_end')
+        .setCustomId('skaw_am_v8_clear_end')
         .setLabel('Clear End')
         .setStyle(ButtonStyle.Secondary)
         .setDisabled(!draft.endDate);
 
     const createButton = new ButtonBuilder()
-        .setCustomId('automessage_create')
+        .setCustomId('skaw_am_v8_create')
         .setLabel('Create Auto Message')
         .setStyle(ButtonStyle.Success)
         .setDisabled(!draft.intervalString);
 
     const cancelButton = new ButtonBuilder()
-        .setCustomId('automessage_cancel')
+        .setCustomId('skaw_am_v8_cancel')
         .setLabel('Cancel')
         .setStyle(ButtonStyle.Danger);
 
@@ -445,7 +446,7 @@ async function assertBotCanSend(channel, guild) {
 
 function getSelectedChannel(interaction) {
     const selected = interaction.fields.getSelectedChannels(
-        'channel',
+        'skaw_am_v8_channel',
         true,
         [ChannelType.GuildText, ChannelType.GuildAnnouncement],
     );
@@ -516,7 +517,7 @@ function formatIntervalFromMs(intervalMs) {
     return `${intervalMs / (60 * 1000)}m`;
 }
 
-export default {
+const automessageCommand = {
     data: new SlashCommandBuilder()
         .setName('automessage')
         .setDescription('Open the Auto Message scheduler form.')
@@ -525,6 +526,13 @@ export default {
     async execute(interaction) {
         try {
             requireManageGuild(interaction);
+
+            // Register the modal/button/select handlers directly into TitanBot's
+            // native interaction collections before opening the modal. This means
+            // the existing interactionCreate dispatcher will route subsequent
+            // submissions without requiring a custom app.js handler.
+            ensureAutoMessageInteractionHandlers(interaction.client, automessageCommand);
+
             deleteDraft(interaction);
             await interaction.showModal(showCreateModal());
         } catch (error) {
@@ -541,6 +549,10 @@ export default {
     },
 
     async handleModal(interaction) {
+        if (interaction.customId !== CREATE_MODAL_ID && interaction.customId !== END_MODAL_ID) {
+            return false;
+        }
+
         try {
             requireManageGuild(interaction);
 
@@ -552,11 +564,11 @@ export default {
                 const channel = getSelectedChannel(interaction);
                 if (!channel) throw new Error('Please select a channel.');
 
-                const message = validateMessage(interaction.fields.getTextInputValue('message'));
-                const startDate = interaction.fields.getStringSelectValues('start_date')?.[0];
-                const startHour = interaction.fields.getStringSelectValues('start_hour')?.[0];
+                const message = validateMessage(interaction.fields.getTextInputValue('skaw_am_v8_message'));
+                const startDate = interaction.fields.getStringSelectValues('skaw_am_v8_start_date')?.[0];
+                const startHour = interaction.fields.getStringSelectValues('skaw_am_v8_start_hour')?.[0];
                 const startMinute = normalizeMinute(
-                    interaction.fields.getTextInputValue('start_minute'),
+                    interaction.fields.getTextInputValue('skaw_am_v8_start_minute'),
                     'Start Minute',
                 );
 
@@ -596,10 +608,10 @@ export default {
                     throw new Error('Your Auto Message setup session expired. Run /automessage again.');
                 }
 
-                draft.endDate = interaction.fields.getStringSelectValues('end_date')?.[0];
-                draft.endHour = interaction.fields.getStringSelectValues('end_hour')?.[0];
+                draft.endDate = interaction.fields.getStringSelectValues('skaw_am_v8_end_date')?.[0];
+                draft.endHour = interaction.fields.getStringSelectValues('skaw_am_v8_end_hour')?.[0];
                 draft.endMinute = normalizeMinute(
-                    interaction.fields.getTextInputValue('end_minute'),
+                    interaction.fields.getTextInputValue('skaw_am_v8_end_minute'),
                     'End Minute',
                 );
 
@@ -633,6 +645,18 @@ export default {
     },
 
     async handleComponent(interaction) {
+        const handledIds = new Set([
+            'skaw_am_v8_interval',
+            'skaw_am_v8_edit',
+            'skaw_am_v8_set_end',
+            'skaw_am_v8_clear_end',
+            'skaw_am_v8_create',
+            'skaw_am_v8_cancel',
+        ]);
+        if (!handledIds.has(interaction.customId)) {
+            return false;
+        }
+
         try {
             requireManageGuild(interaction);
 
@@ -644,7 +668,7 @@ export default {
                 });
             }
 
-            if (interaction.customId === 'automessage_interval') {
+            if (interaction.customId === 'skaw_am_v8_interval') {
                 const selected = interaction.values?.[0];
                 if (!INTERVAL_OPTIONS.some(([value]) => value === selected)) {
                     throw new Error('Invalid interval selection.');
@@ -655,17 +679,17 @@ export default {
                 return interaction.update(buildDraftPanel(draft));
             }
 
-            if (interaction.customId === 'automessage_edit') {
+            if (interaction.customId === 'skaw_am_v8_edit') {
                 setDraft(interaction, draft);
                 return interaction.showModal(showCreateModal(draft));
             }
 
-            if (interaction.customId === 'automessage_set_end') {
+            if (interaction.customId === 'skaw_am_v8_set_end') {
                 setDraft(interaction, draft);
                 return interaction.showModal(showEndModal(draft));
             }
 
-            if (interaction.customId === 'automessage_clear_end') {
+            if (interaction.customId === 'skaw_am_v8_clear_end') {
                 draft.endDate = null;
                 draft.endHour = null;
                 draft.endMinute = null;
@@ -673,7 +697,7 @@ export default {
                 return interaction.update(buildDraftPanel(draft));
             }
 
-            if (interaction.customId === 'automessage_create') {
+            if (interaction.customId === 'skaw_am_v8_create') {
                 if (!draft.intervalString) {
                     throw new Error('Please select an interval before creating the schedule.');
                 }
@@ -689,7 +713,7 @@ export default {
                 });
             }
 
-            if (interaction.customId === 'automessage_cancel') {
+            if (interaction.customId === 'skaw_am_v8_cancel') {
                 deleteDraft(interaction);
                 return interaction.update({
                     embeds: [{
@@ -722,3 +746,5 @@ export default {
         }
     },
 };
+
+export default automessageCommand;
