@@ -1,4 +1,4 @@
-import { SlashCommandBuilder, PermissionFlagsBits, MessageFlags } from 'discord.js';
+import { SlashCommandBuilder, PermissionFlagsBits, PermissionsBitField, MessageFlags } from 'discord.js';
 import { successEmbed, errorEmbed } from '../../utils/embeds.js';
 import { logger } from '../../utils/logger.js';
 import { TitanBotError, ErrorTypes } from '../../utils/errorHandler.js';
@@ -18,7 +18,7 @@ function requireManageGuild(interaction) {
             'Auto Message management used outside guild',
             ErrorTypes.VALIDATION,
             'This command can only be used in a server.',
-            { userId: interaction.user.id }
+            { userId: interaction.user.id },
         );
     }
 
@@ -27,8 +27,27 @@ function requireManageGuild(interaction) {
             'User lacks ManageGuild permission',
             ErrorTypes.PERMISSION,
             "You need the 'Manage Server' permission to manage auto messages.",
-            { userId: interaction.user.id, guildId: interaction.guildId }
+            { userId: interaction.user.id, guildId: interaction.guildId },
         );
+    }
+}
+
+function formatInterval(intervalMs, type) {
+    if (type === 'once' || intervalMs == null) return 'Once';
+    if (intervalMs % (7 * 24 * 60 * 60 * 1000) === 0) return `Every ${intervalMs / (7 * 24 * 60 * 60 * 1000)} week(s)`;
+    if (intervalMs % (24 * 60 * 60 * 1000) === 0) return `Every ${intervalMs / (24 * 60 * 60 * 1000)} day(s)`;
+    if (intervalMs % (60 * 60 * 1000) === 0) return `Every ${intervalMs / (60 * 60 * 1000)} hour(s)`;
+    return `Every ${intervalMs / (60 * 1000)} minute(s)`;
+}
+
+async function assertCanSend(channel, guild) {
+    const me = guild.members.me || await guild.members.fetchMe().catch(() => null);
+    const permissions = channel.permissionsFor(me || guild.client.user);
+    if (!permissions) throw new Error('Could not verify the bot permissions for the selected channel.');
+
+    const required = PermissionsBitField.Flags.ViewChannel | PermissionsBitField.Flags.SendMessages;
+    if (!permissions.has(required)) {
+        throw new Error('The bot needs View Channel and Send Messages permissions in the configured channel.');
     }
 }
 
@@ -37,66 +56,27 @@ export default {
         .setName('automessage-manage')
         .setDescription('Manage existing automatic message schedules.')
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('list')
-                .setDescription('List configured automatic messages.')
-        )
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('view')
-                .setDescription('View one automatic message configuration.')
-                .addStringOption(option =>
-                    option
-                        .setName('id')
-                        .setDescription('Auto Message ID.')
-                        .setRequired(true)
-                )
-        )
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('enable')
-                .setDescription('Enable an automatic message.')
-                .addStringOption(option =>
-                    option
-                        .setName('id')
-                        .setDescription('Auto Message ID.')
-                        .setRequired(true)
-                )
-        )
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('disable')
-                .setDescription('Disable an automatic message.')
-                .addStringOption(option =>
-                    option
-                        .setName('id')
-                        .setDescription('Auto Message ID.')
-                        .setRequired(true)
-                )
-        )
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('delete')
-                .setDescription('Delete an automatic message configuration.')
-                .addStringOption(option =>
-                    option
-                        .setName('id')
-                        .setDescription('Auto Message ID.')
-                        .setRequired(true)
-                )
-        )
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('test')
-                .setDescription('Send one automatic message immediately for testing.')
-                .addStringOption(option =>
-                    option
-                        .setName('id')
-                        .setDescription('Auto Message ID.')
-                        .setRequired(true)
-                )
-        ),
+        .addSubcommand(subcommand => subcommand.setName('list').setDescription('List configured automatic messages.'))
+        .addSubcommand(subcommand => subcommand
+            .setName('view')
+            .setDescription('View one automatic message configuration.')
+            .addStringOption(option => option.setName('id').setDescription('Auto Message ID.').setRequired(true)))
+        .addSubcommand(subcommand => subcommand
+            .setName('enable')
+            .setDescription('Enable an automatic message.')
+            .addStringOption(option => option.setName('id').setDescription('Auto Message ID.').setRequired(true)))
+        .addSubcommand(subcommand => subcommand
+            .setName('disable')
+            .setDescription('Disable an automatic message.')
+            .addStringOption(option => option.setName('id').setDescription('Auto Message ID.').setRequired(true)))
+        .addSubcommand(subcommand => subcommand
+            .setName('delete')
+            .setDescription('Delete an automatic message configuration.')
+            .addStringOption(option => option.setName('id').setDescription('Auto Message ID.').setRequired(true)))
+        .addSubcommand(subcommand => subcommand
+            .setName('test')
+            .setDescription('Send one automatic message immediately for testing.')
+            .addStringOption(option => option.setName('id').setDescription('Auto Message ID.').setRequired(true))),
 
     async execute(interaction) {
         await InteractionHelper.safeDefer(interaction, { flags: MessageFlags.Ephemeral });
@@ -117,12 +97,8 @@ export default {
 
                 const lines = schedules.slice(0, MAX_LIST_ITEMS).map(schedule => {
                     const status = schedule.enabled ? '🟢 ON' : '⚪ OFF';
-                    const next = schedule.nextRunAt
-                        ? formatDateTime(schedule.nextRunAt, schedule.timezone)
-                        : '—';
-                    const interval = schedule.scheduleType === 'once'
-                        ? 'once'
-                        : `${Math.round(schedule.intervalMs / 60000)}m`;
+                    const next = schedule.nextRunAt ? formatDateTime(schedule.nextRunAt, schedule.timezone) : '—';
+                    const interval = formatInterval(schedule.intervalMs, schedule.scheduleType);
                     return `${status} \`${schedule.id}\` → <#${schedule.channelId}> · ${interval} · next: ${next}`;
                 });
 
@@ -145,16 +121,6 @@ export default {
             }
 
             if (subcommand === 'view') {
-                const interval = schedule.scheduleType === 'once'
-                    ? 'Once'
-                    : `${Math.round(schedule.intervalMs / 60000)} minutes`;
-                const next = schedule.nextRunAt
-                    ? formatDateTime(schedule.nextRunAt, schedule.timezone)
-                    : '—';
-                const end = schedule.endAt
-                    ? formatDateTime(schedule.endAt, schedule.timezone)
-                    : 'No end';
-
                 return InteractionHelper.safeReply(interaction, {
                     embeds: [{
                         title: `Auto Message • ${schedule.id}`,
@@ -162,10 +128,10 @@ export default {
                         fields: [
                             { name: 'Channel', value: `<#${schedule.channelId}>`, inline: true },
                             { name: 'Status', value: schedule.enabled ? 'Enabled' : 'Disabled', inline: true },
-                            { name: 'Interval', value: interval, inline: true },
+                            { name: 'Interval', value: formatInterval(schedule.intervalMs, schedule.scheduleType), inline: true },
                             { name: 'Start', value: formatDateTime(schedule.startAt, schedule.timezone), inline: true },
-                            { name: 'Next', value: next, inline: true },
-                            { name: 'End', value: end, inline: true },
+                            { name: 'Next', value: schedule.nextRunAt ? formatDateTime(schedule.nextRunAt, schedule.timezone) : '—', inline: true },
+                            { name: 'End', value: schedule.endAt ? formatDateTime(schedule.endAt, schedule.timezone) : 'No end', inline: true },
                             { name: 'Runs', value: String(schedule.runCount), inline: true },
                         ],
                         footer: { text: `Timezone: ${schedule.timezone}` },
@@ -181,9 +147,9 @@ export default {
                     if (schedule.endAt && now >= schedule.endAt) {
                         throw new Error('This automatic message has already passed its end time. Create a new schedule.');
                     }
-                    if (!schedule.nextRunAt || schedule.nextRunAt < now) {
-                        schedule.nextRunAt = now;
-                    }
+                    schedule.nextRunAt = schedule.nextRunAt && schedule.nextRunAt > now
+                        ? schedule.nextRunAt
+                        : now;
                 } else {
                     schedule.nextRunAt = null;
                 }
@@ -191,13 +157,16 @@ export default {
                 schedule.updatedAt = new Date().toISOString();
 
                 const all = await getGuildAutoMessages(interaction.client, guildId);
-                const updated = all.map(item => item.id === schedule.id ? schedule : item);
-                await saveGuildAutoMessages(interaction.client, guildId, updated);
+                await saveGuildAutoMessages(
+                    interaction.client,
+                    guildId,
+                    all.map(item => item.id === schedule.id ? schedule : item),
+                );
 
                 return InteractionHelper.safeReply(interaction, {
                     embeds: [successEmbed(
                         `Auto Message ${schedule.enabled ? 'Enabled' : 'Disabled'} ✅`,
-                        `\`${schedule.id}\` is now **${schedule.enabled ? 'enabled' : 'disabled'}**.`
+                        `\`${schedule.id}\` is now **${schedule.enabled ? 'enabled' : 'disabled'}**.`,
                     )],
                 });
             }
@@ -207,7 +176,7 @@ export default {
                 await saveGuildAutoMessages(
                     interaction.client,
                     guildId,
-                    all.filter(item => item.id !== schedule.id)
+                    all.filter(item => item.id !== schedule.id),
                 );
 
                 return InteractionHelper.safeReply(interaction, {
@@ -217,11 +186,13 @@ export default {
 
             if (subcommand === 'test') {
                 const channel = await interaction.client.channels.fetch(schedule.channelId).catch(() => null);
-                if (!channel || !channel.isTextBased()) {
+                if (!channel || !channel.isTextBased() || channel.isDMBased()) {
                     throw new Error('The configured channel is unavailable.');
                 }
 
+                await assertCanSend(channel, interaction.guild);
                 const sent = await channel.send({ content: schedule.message });
+
                 return InteractionHelper.safeReply(interaction, {
                     embeds: [successEmbed('Auto Message Test Sent ✅', `Message sent to ${channel}.\nMessage ID: \`${sent.id}\``)],
                 });
