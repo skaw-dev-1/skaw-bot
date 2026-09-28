@@ -27,6 +27,7 @@ import {
     parseScheduledDateTime,
     formatDateTime,
     validateMessage,
+    startAutoMessageScheduler,
 } from '../../services/autoMessageService.js';
 
 const CREATE_MODAL_ID = 'skaw_am_v10_create_modal';
@@ -536,6 +537,10 @@ const automessageCommand = {
     async execute(interaction) {
         try {
             requireManageGuild(interaction);
+
+            // Ensure background scheduling is active even if the host app has not yet
+            // wired the startup scheduler. The service guard prevents duplicates.
+            startAutoMessageScheduler(interaction.client);
 
             // Register the modal/button/select handlers directly into TitanBot's
             // native interaction collections before opening the modal. This means
