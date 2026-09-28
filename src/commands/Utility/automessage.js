@@ -32,6 +32,7 @@ import {
     validateEmbedColor,
     validateEmbedUrl,
     startAutoMessageScheduler,
+    SKAW_DEFAULT_EMBED_COLOR,
 } from '../../services/autoMessageService.js';
 
 const CREATE_MODAL_ID = 'skaw_am_v10_create_modal';
@@ -312,7 +313,7 @@ function showEmbedModal(draft = {}) {
 
     const colorInput = optionalTextInput(
         EMBED_COLOR_ID,
-        'Example: #1A9EF3 (optional)',
+        `Default: ${SKAW_DEFAULT_EMBED_COLOR} • optional custom color`,
         draft.embed?.color || '',
         7,
     );
@@ -336,7 +337,7 @@ function showEmbedModal(draft = {}) {
         .setTitle('Configure Embed Message')
         .addLabelComponents(
             makeTextLabel('Title', 'Optional.', titleInput),
-            makeTextLabel('Description', 'The main embed text. Emoji are fully supported.', descriptionInput),
+            makeTextLabel('Description', 'Unicode emoji works. Server custom emoji can be pasted or typed as :name:.', descriptionInput),
             makeTextLabel('Color', 'Optional 6-digit hex color.', colorInput),
             makeTextLabel('Footer', 'Optional.', footerInput),
             makeTextLabel('Image URL', 'Optional HTTP/HTTPS image URL.', imageInput),
@@ -350,15 +351,16 @@ function buildEmbedPreview(draft) {
     const embed = new EmbedBuilder();
     if (embedData.title) embed.setTitle(embedData.title);
     embed.setDescription(embedData.description || draft.message || '');
-    if (embedData.color) {
-        try {
-            embed.setColor(Number.parseInt(embedData.color.slice(1), 16));
-        } catch {
-            // Keep preview without color if it cannot be parsed. Final validation handles it.
-        }
+    const previewColor = embedData.color || SKAW_DEFAULT_EMBED_COLOR;
+    try {
+        embed.setColor(Number.parseInt(previewColor.slice(1), 16));
+    } catch {
+        // Final validation will show the real error on submit.
     }
     if (embedData.footer) embed.setFooter({ text: embedData.footer });
-    if (embedData.imageUrl) embed.setImage(embedData.imageUrl);
+    if (embedData.imageUrl && /^https?:\/\//i.test(embedData.imageUrl)) {
+        embed.setImage(embedData.imageUrl);
+    }
     return embed.toJSON();
 }
 
@@ -396,7 +398,7 @@ function showCreateModal(draft = null) {
         .setTitle('Create an Auto Message')
         .addLabelComponents(
             makeChannelLabel(draft),
-            makeTextLabel('Message', 'The text Discord will send automatically.', messageInput),
+            makeTextLabel('Message', 'Unicode emoji works. Server custom emoji can be pasted or typed as :name:.', messageInput),
             makeSelectLabel(
                 'Start Date',
                 `Choose the first day • ${AUTO_MESSAGE_DEFAULT_TIMEZONE}`,
@@ -531,28 +533,45 @@ function buildDraftPanel(draft) {
         .setLabel('Cancel')
         .setStyle(ButtonStyle.Danger);
 
+    const setupEmbed = {
+        title: 'Create an Auto Message',
+        description: draft.intervalString
+            ? 'Review the schedule below. You can edit the details, choose the message type, change the repeat interval, set an optional end time, or create the schedule.'
+            : 'Choose the message type and repeat interval below before creating the schedule.',
+        fields: [
+            { name: 'Channel', value: `<#${draft.channelId}>`, inline: true },
+            { name: 'Message Type', value: draft.messageType === 'embed' ? 'Embed Message' : 'Normal Text Message', inline: true },
+            { name: 'Interval', value: intervalLabel(draft.intervalString), inline: true },
+            { name: 'Start', value: startAt ? `<t:${Math.floor(startAt / 1000)}:F>` : 'Invalid', inline: true },
+            { name: 'End', value: endAt ? `<t:${Math.floor(endAt / 1000)}:F>` : 'No end time', inline: true },
+            { name: draft.messageType === 'embed' ? 'Embed Description' : 'Message', value: draft.message ? truncate(draft.message, 1024) : 'Not set', inline: false },
+            ...(draft.messageType === 'embed' && draft.embed?.title
+                ? [{ name: 'Embed Title', value: truncate(draft.embed.title, 256), inline: false }]
+                : []),
+            ...(draft.messageType === 'embed'
+                ? [{ name: 'Embed Color', value: draft.embed?.color || SKAW_DEFAULT_EMBED_COLOR, inline: true }]
+                : []),
+        ],
+        footer: { text: `Timezone: ${AUTO_MESSAGE_DEFAULT_TIMEZONE}` },
+    };
+
+    const preview = draft.messageType === 'embed' ? buildEmbedPreview(draft) : null;
     return {
-        embeds: [{
-            title: 'Create an Auto Message',
-            description: draft.intervalString
-                ? 'Review the schedule below. You can edit the details, choose the message type, change the repeat interval, set an optional end time, or create the schedule.'
-                : 'Choose the message type and repeat interval below before creating the schedule.',
-            fields: [
-                { name: 'Channel', value: `<#${draft.channelId}>`, inline: true },
-                { name: 'Message Type', value: draft.messageType === 'embed' ? 'Embed Message' : 'Normal Text Message', inline: true },
-                { name: 'Interval', value: intervalLabel(draft.intervalString), inline: true },
-                { name: 'Start', value: startAt ? `<t:${Math.floor(startAt / 1000)}:F>` : 'Invalid', inline: true },
-                { name: 'End', value: endAt ? `<t:${Math.floor(endAt / 1000)}:F>` : 'No end time', inline: true },
-                { name: draft.messageType === 'embed' ? 'Embed Description' : 'Message', value: draft.message ? truncate(draft.message, 1024) : 'Not set', inline: false },
-                ...(draft.messageType === 'embed' && draft.embed?.title ? [{ name: 'Embed Title', value: truncate(draft.embed.title, 256), inline: false }] : []),
-            ],
-            ...(draft.messageType === 'embed' && buildEmbedPreview(draft) ? { embeds: [{ title: 'Create an Auto Message', description: 'Review the configuration below.', fields: [], footer: { text: `Timezone: ${AUTO_MESSAGE_DEFAULT_TIMEZONE}` } }, buildEmbedPreview(draft)] } : {}),
-            footer: { text: `Timezone: ${AUTO_MESSAGE_DEFAULT_TIMEZONE}` },
-        }],
+        embeds: preview ? [setupEmbed, preview] : [setupEmbed],
         components: [
             new ActionRowBuilder().addComponents(messageTypeSelect(draft)),
             new ActionRowBuilder().addComponents(intervalSelect(draft)),
-            new ActionRowBuilder().addComponents(editButton, ...(draft.messageType === 'embed' ? [new ButtonBuilder().setCustomId('skaw_am_v10_edit_embed').setLabel('Edit Embed').setStyle(ButtonStyle.Primary)] : []), endButton, clearEndButton),
+            new ActionRowBuilder().addComponents(
+                editButton,
+                ...(draft.messageType === 'embed'
+                    ? [new ButtonBuilder()
+                        .setCustomId('skaw_am_v10_edit_embed')
+                        .setLabel('Edit Embed')
+                        .setStyle(ButtonStyle.Primary)]
+                    : []),
+                endButton,
+                clearEndButton,
+            ),
             new ActionRowBuilder().addComponents(createButton, cancelButton),
         ],
     };
