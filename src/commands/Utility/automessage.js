@@ -35,18 +35,25 @@ const DATE_OPTION_COUNT = 25;
 const drafts = new Map();
 
 const INTERVAL_OPTIONS = [
+    ['1m', 'Every 1 minute'],
     ['5m', 'Every 5 minutes'],
     ['10m', 'Every 10 minutes'],
     ['15m', 'Every 15 minutes'],
     ['30m', 'Every 30 minutes'],
+    ['45m', 'Every 45 minutes'],
     ['1h', 'Every 1 hour'],
     ['2h', 'Every 2 hours'],
     ['3h', 'Every 3 hours'],
+    ['4h', 'Every 4 hours'],
     ['6h', 'Every 6 hours'],
+    ['8h', 'Every 8 hours'],
     ['12h', 'Every 12 hours'],
     ['24h', 'Every 24 hours'],
     ['1d', 'Every day'],
+    ['2d', 'Every 2 days'],
+    ['3d', 'Every 3 days'],
     ['1w', 'Every week'],
+    ['2w', 'Every 2 weeks'],
     ['once', 'Send once only'],
 ];
 
@@ -139,6 +146,42 @@ function buildDateOptions(startDateKey, selectedDate = null, count = DATE_OPTION
     });
 }
 
+function getNextHourDefaults(now = new Date()) {
+    const localParts = new Intl.DateTimeFormat('en-US', {
+        timeZone: AUTO_MESSAGE_DEFAULT_TIMEZONE,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hourCycle: 'h23',
+    }).formatToParts(now);
+
+    const values = {};
+    for (const part of localParts) {
+        if (part.type !== 'literal') values[part.type] = part.value;
+    }
+
+    const currentHour = Number(values.hour);
+    const currentMinute = Number(values.minute);
+    const nextHourTotal = currentHour + 1;
+
+    if (nextHourTotal >= 24) {
+        const baseDate = `${values.year}-${values.month}-${values.day}`;
+        return {
+            date: addDaysToDateKey(baseDate, 1),
+            hour: '00',
+            minute: '00',
+        };
+    }
+
+    return {
+        date: `${values.year}-${values.month}-${values.day}`,
+        hour: String(nextHourTotal).padStart(2, '0'),
+        minute: '00',
+    };
+}
+
 function buildHourOptions(selected = null) {
     return Array.from({ length: 24 }, (_, hour) => {
         const value = String(hour).padStart(2, '0');
@@ -181,7 +224,7 @@ function makeChannelLabel(draft) {
         .setChannelSelectMenuComponent(channelSelect);
 }
 
-function buildMinuteInput(customId, value = '') {
+function buildMinuteInput(customId, value = '00') {
     const input = new TextInputBuilder()
         .setCustomId(customId)
         .setPlaceholder('00–59 (example: 10)')
@@ -190,19 +233,15 @@ function buildMinuteInput(customId, value = '') {
         .setStyle(TextInputStyle.Short)
         .setRequired(true);
 
-    if (value !== '') input.setValue(String(value));
+    input.setValue(String(value).padStart(2, '0'));
     return input;
 }
 
 function showCreateModal(draft = null) {
-    const now = new Date();
-    const nowDateKey = dateKeyFromDate(now);
-    const startDate = draft?.startDate || nowDateKey;
-    const currentHour = new Intl.DateTimeFormat('en-US', {
-        timeZone: AUTO_MESSAGE_DEFAULT_TIMEZONE,
-        hour: '2-digit',
-        hourCycle: 'h23',
-    }).format(now);
+    const defaults = getNextHourDefaults();
+    const startDate = draft?.startDate || defaults.date;
+    const startHour = draft?.startHour || defaults.hour;
+    const startMinute = draft?.startMinute ?? defaults.minute;
 
     const messageInput = new TextInputBuilder()
         .setCustomId('message')
@@ -217,15 +256,15 @@ function showCreateModal(draft = null) {
         .setCustomId('start_date')
         .setPlaceholder('Select start date')
         .setRequired(true)
-        .addOptions(buildDateOptions(nowDateKey, startDate));
+        .addOptions(buildDateOptions(dateKeyFromDate(new Date()), startDate));
 
     const startHourSelect = new StringSelectMenuBuilder()
         .setCustomId('start_hour')
         .setPlaceholder('Select start hour')
         .setRequired(true)
-        .addOptions(buildHourOptions(draft?.startHour || currentHour));
+        .addOptions(buildHourOptions(startHour));
 
-    const startMinuteInput = buildMinuteInput('start_minute', draft?.startMinute ?? '00');
+    const startMinuteInput = buildMinuteInput('start_minute', startMinute);
 
     return new ModalBuilder()
         .setCustomId(CREATE_MODAL_ID)
@@ -313,14 +352,17 @@ function parseDraftDateTime(draft, type) {
 
 function intervalLabel(intervalString) {
     const found = INTERVAL_OPTIONS.find(([value]) => value === intervalString);
-    return found ? found[1] : String(intervalString || 'Not selected');
+    return found ? found[1] : 'Not selected';
 }
 
 function intervalSelect(draft) {
+    // IMPORTANT: this select is rendered in a normal message ActionRow,
+    // not inside a modal Label. `required` is a modal-only property.
     return new StringSelectMenuBuilder()
         .setCustomId('automessage_interval')
         .setPlaceholder('Select how often the message should repeat')
-        .setRequired(true)
+        .setMinValues(1)
+        .setMaxValues(1)
         .addOptions(INTERVAL_OPTIONS.map(([value, description]) => ({
             label: value === 'once' ? 'Once' : value,
             description,
@@ -337,6 +379,11 @@ function buildDraftPanel(draft) {
     const startAt = parseDraftDateTime(draft, 'start');
     const endAt = draft.endDate ? parseDraftDateTime(draft, 'end') : null;
 
+    const editButton = new ButtonBuilder()
+        .setCustomId('automessage_edit')
+        .setLabel('Edit Details')
+        .setStyle(ButtonStyle.Secondary);
+
     const endButton = new ButtonBuilder()
         .setCustomId('automessage_set_end')
         .setLabel(draft.endDate ? 'Edit End Time' : 'Set End Time')
@@ -351,7 +398,8 @@ function buildDraftPanel(draft) {
     const createButton = new ButtonBuilder()
         .setCustomId('automessage_create')
         .setLabel('Create Auto Message')
-        .setStyle(ButtonStyle.Success);
+        .setStyle(ButtonStyle.Success)
+        .setDisabled(!draft.intervalString);
 
     const cancelButton = new ButtonBuilder()
         .setCustomId('automessage_cancel')
@@ -361,7 +409,9 @@ function buildDraftPanel(draft) {
     return {
         embeds: [{
             title: 'Create an Auto Message',
-            description: 'Your message details are saved temporarily. Choose the repeat interval below, then optionally set an end time.',
+            description: draft.intervalString
+                ? 'Review the schedule below. You can edit the details, change the repeat interval, set an optional end time, or create the schedule.'
+                : 'Choose the repeat interval below before creating the schedule. You can also edit the details or add an optional end time.',
             fields: [
                 { name: 'Channel', value: `<#${draft.channelId}>`, inline: true },
                 { name: 'Interval', value: intervalLabel(draft.intervalString), inline: true },
@@ -373,7 +423,7 @@ function buildDraftPanel(draft) {
         }],
         components: [
             new ActionRowBuilder().addComponents(intervalSelect(draft)),
-            new ActionRowBuilder().addComponents(endButton, clearEndButton),
+            new ActionRowBuilder().addComponents(editButton, endButton, clearEndButton),
             new ActionRowBuilder().addComponents(createButton, cancelButton),
         ],
     };
@@ -393,17 +443,13 @@ async function assertBotCanSend(channel, guild) {
     }
 }
 
-async function getSelectedChannel(interaction) {
-    if (typeof interaction.fields.getSelectedChannels === 'function') {
-        const selected = interaction.fields.getSelectedChannels(
-            'channel',
-            true,
-            [ChannelType.GuildText, ChannelType.GuildAnnouncement],
-        );
-        return selected?.first() || null;
-    }
-
-    throw new Error('This bot needs a compatible discord.js version that supports Channel Select in modals.');
+function getSelectedChannel(interaction) {
+    const selected = interaction.fields.getSelectedChannels(
+        'channel',
+        true,
+        [ChannelType.GuildText, ChannelType.GuildAnnouncement],
+    );
+    return selected?.first() || null;
 }
 
 async function createScheduleFromDraft(interaction, draft) {
@@ -503,7 +549,7 @@ export default {
             }
 
             if (interaction.customId === CREATE_MODAL_ID) {
-                const channel = await getSelectedChannel(interaction);
+                const channel = getSelectedChannel(interaction);
                 if (!channel) throw new Error('Please select a channel.');
 
                 const message = validateMessage(interaction.fields.getTextInputValue('message'));
@@ -518,6 +564,7 @@ export default {
                     throw new Error('Please choose the start date and start time.');
                 }
 
+                const previous = getDraft(interaction);
                 const draft = {
                     guildId: interaction.guildId,
                     userId: interaction.user.id,
@@ -526,10 +573,10 @@ export default {
                     startDate,
                     startHour,
                     startMinute,
-                    intervalString: '1h',
-                    endDate: null,
-                    endHour: null,
-                    endMinute: null,
+                    intervalString: previous?.intervalString || null,
+                    endDate: previous?.endDate || null,
+                    endHour: previous?.endHour || null,
+                    endMinute: previous?.endMinute || null,
                     updatedAt: Date.now(),
                 };
 
@@ -581,7 +628,7 @@ export default {
             return interaction.editReply({
                 embeds: [errorEmbed('Auto Message Error', description)],
                 components: [],
-            });
+            }).catch(() => null);
         }
     },
 
@@ -608,6 +655,11 @@ export default {
                 return interaction.update(buildDraftPanel(draft));
             }
 
+            if (interaction.customId === 'automessage_edit') {
+                setDraft(interaction, draft);
+                return interaction.showModal(showCreateModal(draft));
+            }
+
             if (interaction.customId === 'automessage_set_end') {
                 setDraft(interaction, draft);
                 return interaction.showModal(showEndModal(draft));
@@ -622,9 +674,11 @@ export default {
             }
 
             if (interaction.customId === 'automessage_create') {
-                if (!interaction.deferred && !interaction.replied) {
-                    await interaction.deferUpdate();
+                if (!draft.intervalString) {
+                    throw new Error('Please select an interval before creating the schedule.');
                 }
+
+                await interaction.deferUpdate();
 
                 const { schedule, channel } = await createScheduleFromDraft(interaction, draft);
                 deleteDraft(interaction);
