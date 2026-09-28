@@ -1,61 +1,63 @@
-// Reliable SKAW Auto Message interaction registration for TitanBot.
-// Registers both v9 IDs and keeps compatibility with older v8 registrations
-// so a mixed deployment cannot strand the modal after Submit.
+// SKAW GROUP Auto Message interaction router.
+//
+// TitanBot's generic interaction loader is startup-based. The Auto Message
+// flow is created dynamically from /automessage, so we register ONE direct
+// interactionCreate listener per Client and route only our v10 custom IDs.
+// This avoids relying on mutating client.buttons/client.selectMenus/client.modals
+// after startup, which can be missed by a dispatcher that uses startup snapshots.
 
+import { Events } from 'discord.js';
 import { logger } from '../utils/logger.js';
-
-const CREATE_MODAL_ID = 'skaw_am_v8_create_modal';
-const END_MODAL_ID = 'skaw_am_v8_end_modal';
-const LEGACY_CREATE_MODAL_ID = 'automessage_create_modal';
-const LEGACY_END_MODAL_ID = 'automessage_end_modal';
-
-const INTERVAL_ID = 'skaw_am_v8_interval';
-const EDIT_ID = 'skaw_am_v8_edit';
-const SET_END_ID = 'skaw_am_v8_set_end';
-const CLEAR_END_ID = 'skaw_am_v8_clear_end';
-const CREATE_ID = 'skaw_am_v8_create';
-const CANCEL_ID = 'skaw_am_v8_cancel';
 
 const registeredClients = new WeakSet();
 
-function register(map, ids, handler) {
-    if (!map?.set) return false;
-    for (const customId of ids) {
-        map.set(customId, { customId, execute: handler });
-    }
-    return true;
+const PREFIX = 'skaw_am_v10_';
+
+export const AUTO_MESSAGE_INTERACTION_PREFIX = PREFIX;
+
+export function isAutoMessageInteraction(interaction) {
+    return typeof interaction?.customId === 'string'
+        && interaction.customId.startsWith(PREFIX);
 }
 
 export function ensureAutoMessageInteractionHandlers(client, command) {
     if (!client || !command) return false;
     if (registeredClients.has(client)) return true;
 
-    const handleModal = async (interaction) => command.handleModal(interaction, client);
-    const handleComponent = async (interaction) => command.handleComponent(interaction, client);
+    const listener = async (interaction) => {
+        if (!isAutoMessageInteraction(interaction)) return;
 
-    let registered = false;
+        try {
+            if (interaction.isModalSubmit()) {
+                await command.handleModal(interaction);
+                return;
+            }
 
-    // Canonical IDs used by v9, plus legacy modal IDs so an older modal that is
-    // still open during a rolling deployment can still be submitted safely.
-    registered ||= register(
-        client.modals,
-        [CREATE_MODAL_ID, END_MODAL_ID, LEGACY_CREATE_MODAL_ID, LEGACY_END_MODAL_ID],
-        handleModal,
-    );
+            if (interaction.isButton() || interaction.isStringSelectMenu()) {
+                await command.handleComponent(interaction);
+            }
+        } catch (error) {
+            logger.error('SKAW Auto Message interaction dispatch error:', error);
 
-    registered ||= register(client.selectMenus, [INTERVAL_ID], handleComponent);
-    registered ||= register(
-        client.buttons,
-        [EDIT_ID, SET_END_ID, CLEAR_END_ID, CREATE_ID, CANCEL_ID],
-        handleComponent,
-    );
+            try {
+                const payload = {
+                    content: 'Something went wrong while processing the Auto Message. Please try again.',
+                    ephemeral: true,
+                };
 
-    if (registered) {
-        registeredClients.add(client);
-        logger.info('SKAW Auto Message interaction handlers registered.');
-        return true;
-    }
+                if (interaction.deferred || interaction.replied) {
+                    await interaction.followUp(payload).catch(() => null);
+                } else {
+                    await interaction.reply(payload).catch(() => null);
+                }
+            } catch {
+                // Never let a secondary reply failure become an unhandled rejection.
+            }
+        }
+    };
 
-    logger.warn('SKAW Auto Message could not register interaction handlers: native client collections unavailable.');
-    return false;
+    client.on(Events.InteractionCreate, listener);
+    registeredClients.add(client);
+    logger.info('SKAW Auto Message v10 direct interaction router registered.');
+    return true;
 }
