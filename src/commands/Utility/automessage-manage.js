@@ -13,6 +13,7 @@ import {
 
 const MAX_LIST_ITEMS = 15;
 
+
 function requireManageGuild(interaction) {
     if (!interaction.inGuild()) {
         throw new TitanBotError(
@@ -193,7 +194,7 @@ export default {
                 }
 
                 await assertCanSend(channel, interaction.guild);
-                const sent = await channel.send(buildAutoMessagePayload(schedule));
+                const sent = await channel.send(buildAutoMessagePayload(schedule, interaction.guild));
 
                 return InteractionHelper.safeReply(interaction, {
                     embeds: [successEmbed('Auto Message Test Sent ✅', `Message sent to ${channel}.\nMessage ID: \`${sent.id}\``)],
