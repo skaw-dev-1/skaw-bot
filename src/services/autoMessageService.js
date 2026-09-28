@@ -8,6 +8,9 @@ const AUTO_MESSAGE_KEY = (guildId) => `guild:${guildId}:auto_messages`;
 const DEFAULT_TIMEZONE = 'Asia/Jakarta';
 const DISCORD_MAX_MESSAGE_LENGTH = 2000;
 const MIN_INTERVAL_MS = 60 * 1000;
+const DEFAULT_SCHEDULER_INTERVAL_MS = 30 * 1000;
+
+const schedulerHandles = new WeakMap();
 
 function normalizeSchedule(record = {}) {
     const startAt = Number(record.startAt);
@@ -318,6 +321,48 @@ export function buildAutoMessageData({
 }
 
 let schedulerRunning = false;
+
+export function isAutoMessageSchedulerRunning(client) {
+    const state = client ? schedulerHandles.get(client) : null;
+    return Boolean(state?.timer);
+}
+
+export function startAutoMessageScheduler(client, intervalMs = DEFAULT_SCHEDULER_INTERVAL_MS) {
+    if (!client || typeof client !== 'object') return false;
+
+    const existing = schedulerHandles.get(client);
+    if (existing?.timer) return true;
+
+    const safeInterval = Number.isFinite(intervalMs) && intervalMs >= 5_000
+        ? intervalMs
+        : DEFAULT_SCHEDULER_INTERVAL_MS;
+
+    const tick = () => {
+        runAutoMessages(client).catch(error => {
+            logger.error('Auto Message scheduler tick failed:', error);
+        });
+    };
+
+    // Run immediately so a due schedule does not have to wait for the first interval.
+    tick();
+
+    const timer = setInterval(tick, safeInterval);
+    if (typeof timer.unref === 'function') timer.unref();
+
+    schedulerHandles.set(client, { timer, intervalMs: safeInterval });
+    logger.info(`Auto Message scheduler started (every ${Math.round(safeInterval / 1000)}s).`);
+    return true;
+}
+
+export function stopAutoMessageScheduler(client) {
+    const state = client ? schedulerHandles.get(client) : null;
+    if (!state?.timer) return false;
+
+    clearInterval(state.timer);
+    schedulerHandles.delete(client);
+    logger.info('Auto Message scheduler stopped.');
+    return true;
+}
 
 export async function runAutoMessages(client) {
     if (!client?.db) {
