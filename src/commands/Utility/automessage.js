@@ -1,5 +1,6 @@
 import {
     ModalBuilder,
+    SlashCommandBuilder,
     TextInputBuilder,
     TextInputStyle,
     ActionRowBuilder,
@@ -121,11 +122,10 @@ function resolveTextChannel(guild, value) {
 }
 
 export default {
-    data: {
-        name: 'automessage',
-        description: 'Open the Auto Message scheduler form.',
-        default_member_permissions: String(PermissionFlagsBits.ManageGuild),
-    },
+    data: new SlashCommandBuilder()
+        .setName('automessage')
+        .setDescription('Open the Auto Message scheduler form.')
+        .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
     async execute(interaction) {
         try {
