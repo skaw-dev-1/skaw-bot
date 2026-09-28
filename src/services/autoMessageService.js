@@ -14,11 +14,34 @@ const DEFAULT_SCHEDULER_INTERVAL_MS = 30 * 1000;
 
 const schedulerHandles = new WeakMap();
 
+// SKAW GROUP brand color: navy/blue that stays visible on Discord's dark UI.
+export const SKAW_DEFAULT_EMBED_COLOR = '#0A5EA8';
+
+function resolveCustomEmojiSyntax(text, guild) {
+    if (typeof text !== 'string' || !text || !guild?.emojis?.cache) return text;
+
+    return text.replace(/(^|[^<]):([A-Za-z0-9_\-]{2,32}):/g, (full, prefix, name) => {
+        const emoji = guild.emojis.cache.find(item =>
+            item?.name && item.name.toLowerCase() === name.toLowerCase(),
+        );
+
+        if (!emoji) return full;
+
+        const markup = emoji.animated
+            ? `<a:${emoji.name}:${emoji.id}>`
+            : `<:${emoji.name}:${emoji.id}>`;
+
+        return `${prefix}${markup}`;
+    });
+}
+
 function normalizeEmbed(embed = {}, fallbackDescription = '') {
     const normalized = {
         title: typeof embed.title === 'string' ? embed.title.trim() : '',
         description: typeof embed.description === 'string' ? embed.description : '',
-        color: typeof embed.color === 'string' ? embed.color.trim() : '',
+        color: typeof embed.color === 'string' && embed.color.trim()
+            ? embed.color.trim()
+            : SKAW_DEFAULT_EMBED_COLOR,
         footer: typeof embed.footer === 'string' ? embed.footer.trim() : '',
         imageUrl: typeof embed.imageUrl === 'string' ? embed.imageUrl.trim() : '',
     };
@@ -347,15 +370,16 @@ export function buildAutoMessageData({
     const cleanMessage = normalizedType === 'embed'
         ? validateEmbedDescription(message)
         : validateMessage(message);
-    const cleanEmbed = normalizedType === 'embed'
-        ? normalizeEmbed(embed, cleanMessage)
-        : normalizeEmbed();
 
-    cleanEmbed.title = cleanEmbed.title.slice(0, 256);
-    cleanEmbed.footer = cleanEmbed.footer.slice(0, 2048);
-    cleanEmbed.color = validateEmbedColor(cleanEmbed.color);
-    cleanEmbed.imageUrl = validateEmbedUrl(cleanEmbed.imageUrl);
-    cleanEmbed.description = validateEmbedDescription(cleanEmbed.description);
+    let cleanEmbed = null;
+    if (normalizedType === 'embed') {
+        cleanEmbed = normalizeEmbed(embed, cleanMessage);
+        cleanEmbed.title = cleanEmbed.title.slice(0, 256);
+        cleanEmbed.footer = cleanEmbed.footer.slice(0, 2048);
+        cleanEmbed.color = validateEmbedColor(cleanEmbed.color);
+        cleanEmbed.imageUrl = validateEmbedUrl(cleanEmbed.imageUrl);
+        cleanEmbed.description = validateEmbedDescription(cleanEmbed.description);
+    }
 
     const startAt = parseScheduledDateTime(startString, zone);
     const endAt = endString ? parseScheduledDateTime(endString, zone) : null;
@@ -398,18 +422,26 @@ function parseHexColor(color) {
     return Number.parseInt(clean.slice(1), 16);
 }
 
-export function buildAutoMessagePayload(schedule) {
+export function buildAutoMessagePayload(schedule, guild = null) {
     if (!schedule || schedule.messageType !== 'embed') {
-        return { content: String(schedule?.message || '') };
+        return { content: resolveCustomEmojiSyntax(String(schedule?.message || ''), guild) };
     }
 
     const embedData = normalizeEmbed(schedule.embed, schedule.message);
     const embed = new EmbedBuilder();
 
-    if (embedData.title) embed.setTitle(embedData.title.slice(0, 256));
-    if (embedData.description) embed.setDescription(validateEmbedDescription(embedData.description));
+    if (embedData.title) {
+        embed.setTitle(resolveCustomEmojiSyntax(embedData.title.slice(0, 256), guild));
+    }
+    if (embedData.description) {
+        embed.setDescription(resolveCustomEmojiSyntax(validateEmbedDescription(embedData.description), guild));
+    }
     if (embedData.color) embed.setColor(parseHexColor(validateEmbedColor(embedData.color)));
-    if (embedData.footer) embed.setFooter({ text: embedData.footer.slice(0, 2048) });
+    if (embedData.footer) {
+        embed.setFooter({
+            text: resolveCustomEmojiSyntax(embedData.footer.slice(0, 2048), guild),
+        });
+    }
     if (embedData.imageUrl) embed.setImage(validateEmbedUrl(embedData.imageUrl));
 
     return { embeds: [embed] };
@@ -511,7 +543,7 @@ export async function runAutoMessages(client) {
 
                     let payload;
                     try {
-                        payload = buildAutoMessagePayload(schedule);
+                        payload = buildAutoMessagePayload(schedule, guild);
                     } catch (payloadError) {
                         logger.error(`Auto Message ${schedule.id} has invalid message/embeds: ${payloadError.message}`);
                         schedule.enabled = false;
