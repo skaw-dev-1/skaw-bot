@@ -8,6 +8,7 @@
 
 import { Events } from 'discord.js';
 import { logger } from '../utils/logger.js';
+import { startAutoMessageScheduler } from './autoMessageService.js';
 
 const registeredClients = new WeakSet();
 
@@ -28,6 +29,9 @@ export function ensureAutoMessageInteractionHandlers(client, command) {
         if (!isAutoMessageInteraction(interaction)) return;
 
         try {
+            // Keep the scheduler alive for the current bot instance. This is idempotent.
+            startAutoMessageScheduler(interaction.client);
+
             if (interaction.isModalSubmit()) {
                 await command.handleModal(interaction);
                 return;
