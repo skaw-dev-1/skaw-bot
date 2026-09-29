@@ -47,7 +47,7 @@ export default {
                 }
                 const config = await setBoomboxEnabled(interaction.client, guildId, true);
                 startBoomboxService(interaction.client);
-                await interaction.reply(`✅ SKAW Boombox **aktif** di <#${config.channelId}>. Gunakan \\`!bb <URL>\\` atau \\`/bb\\`.`);
+                await interaction.reply(`✅ SKAW Boombox **aktif** di <#${config.channelId}>. Gunakan \`!bb <URL>\` atau \`/bb\`.`);
                 return;
             }
 
@@ -68,10 +68,10 @@ export default {
                 try {
                     const { ensureConverterReady } = await import('../../services/boomboxConversionService.js');
                     const ready = await ensureConverterReady();
-                    await interaction.editReply(`✅ Converter engine siap.\nFFmpeg: \\`${ready.ffmpeg}\\`\nyt-dlp: \\`${ready.ytdlp}\\``);
+                    await interaction.editReply(`✅ Converter engine siap.\nFFmpeg: \`${ready.ffmpeg}\`\nyt-dlp: \`${ready.ytdlp}\``);
                 } catch (error) {
                     const text = error instanceof Error ? error.message : String(error);
-                    await interaction.editReply(`❌ Converter engine belum siap.\n${text}\n\nPastikan dependency Boombox sudah di-install pada repo: \\`npm install ffmpeg-static@5.3.0 yt-dlp-wrap-plus@2.5.0 form-data@4.0.4\\``);
+                    await interaction.editReply(`❌ Converter engine belum siap.\n${text}\n\nPastikan dependency Boombox sudah di-install pada repo: \`npm install ffmpeg-static@5.3.0 yt-dlp-wrap-plus@2.5.0 form-data@4.0.4\``);
                 }
                 return;
             }
