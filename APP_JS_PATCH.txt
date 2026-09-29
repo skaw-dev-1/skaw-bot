@@ -1,0 +1,17 @@
+# SKAW BOOMBOX v3 - app.js
+
+Tambahkan import di bagian import lain:
+
+import { startBoomboxService } from './services/boomboxService.js';
+
+Setelah bot login berhasil, panggil:
+
+startBoomboxService(this);
+
+Contoh:
+
+await this.login(this.config.bot.token);
+startupLog('Discord login successful');
+startBoomboxService(this);
+
+JANGAN membuat listener MessageCreate lain untuk Boombox. v3 sudah menangani !bb di boomboxService.js.
