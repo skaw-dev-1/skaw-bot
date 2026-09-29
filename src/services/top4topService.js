@@ -1,23 +1,47 @@
 import fs from 'node:fs';
 import FormData from 'form-data';
 import axios from 'axios';
-import { validateDirectAudioUrl } from '../utils/boomboxUrl.js';
+import { normalizeHttpBoomboxUrl, validateDirectAudioUrl } from '../utils/boomboxUrl.js';
 
 const DEFAULT_UPLOAD_URL = 'https://top4top.io/index.php';
 
-function findMp3Links(html) {
+function extractCandidateUrls(html) {
     const source = String(html || '');
     const found = new Set();
-    const regex = /https?:\/\/[^\s"'<>]+\.mp3(?:\?[^\s"'<>]*)?/gi;
-    for (const match of source.matchAll(regex)) found.add(match[0]);
+    const patterns = [
+        /https?:\\/\\/[^\"'<>\s]+/gi,
+        /https?:\/\/[^\"'<>\s]+/gi,
+        /href\\s*=\\s*[\"']([^\"']+)[\"']/gi,
+        /href\s*=\s*[\"']([^\"']+)[\"']/gi,
+    ];
+
+    for (const pattern of patterns) {
+        for (const match of source.matchAll(pattern)) {
+            const value = match[1] || match[0];
+            if (String(value).toLowerCase().includes('.mp3')) {
+                const cleaned = String(value)
+                    .replace(/\\u0026/g, '&')
+                    .replace(/&amp;/gi, '&')
+                    .replace(/[\"'<>\]\[),.;!?]+$/g, '');
+                found.add(cleaned);
+            }
+        }
+    }
     return [...found];
 }
 
+function hostAllowed(input) {
+    try {
+        const url = new URL(input);
+        return /(^|\.)top4top\.io$/i.test(url.hostname);
+    } catch {
+        return false;
+    }
+}
 
 export async function uploadMp3ToTop4Top(filePath, originalName = 'skaw-boombox.mp3') {
     const uploadUrl = process.env.TOP4TOP_UPLOAD_URL || DEFAULT_UPLOAD_URL;
     const form = new FormData();
-
     form.append('file_1_', fs.createReadStream(filePath), {
         filename: originalName,
         contentType: 'audio/mpeg',
@@ -25,10 +49,10 @@ export async function uploadMp3ToTop4Top(filePath, originalName = 'skaw-boombox.
     form.append('submitr', 'UpLoad');
 
     const response = await axios.post(uploadUrl, form, {
-        headers: form.getHeaders(),
+        headers: form.getHeaders({ 'User-Agent': 'SKAW-Boombox/3.0' }),
         maxBodyLength: Infinity,
         maxContentLength: Infinity,
-        timeout: 90_000,
+        timeout: 120_000,
         validateStatus: () => true,
     });
 
@@ -36,33 +60,24 @@ export async function uploadMp3ToTop4Top(filePath, originalName = 'skaw-boombox.
         throw new Error(`Upload Top4toP gagal (HTTP ${response.status}).`);
     }
 
-    const html = String(response.data || '');
-    const candidates = findMp3Links(html).filter((candidate) => {
-        try {
-            const parsed = new URL(candidate);
-            const host = parsed.hostname.toLowerCase();
-            return host === 'top4top.io' || host.endsWith('.top4top.io');
-        } catch {
-            return false;
-        }
-    });
+    const candidates = extractCandidateUrls(response.data)
+        .filter(hostAllowed)
+        .map(normalizeHttpBoomboxUrl)
+        .filter(Boolean);
 
     if (!candidates.length) {
-        throw new Error('Top4toP tidak mengembalikan direct MP3 URL Top4toP pada response.');
+        throw new Error('Top4toP tidak mengembalikan direct MP3 URL yang bisa dipakai.');
     }
 
-    const failures = [];
+    const errors = [];
     for (const candidate of candidates) {
         try {
-            const httpUrl = new URL(candidate);
-            httpUrl.protocol = 'http:';
-            const normalized = httpUrl.toString();
-            await validateDirectAudioUrl(normalized);
-            return normalized;
+            await validateDirectAudioUrl(candidate);
+            return candidate;
         } catch (error) {
-            failures.push(error instanceof Error ? error.message : String(error));
+            errors.push(error instanceof Error ? error.message : String(error));
         }
     }
 
-    throw new Error(`Tidak ada direct HTTP MP3 Top4toP yang lolos validasi: ${failures.join(' | ')}`);
+    throw new Error(`Direct HTTP MP3 Top4toP tidak lolos validasi. ${errors.slice(0, 2).join(' | ')}`);
 }
