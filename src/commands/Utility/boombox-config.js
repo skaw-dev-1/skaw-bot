@@ -1,6 +1,6 @@
 import { ChannelType, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
-import { getBoomboxConfig, resetBoomboxConfig, setBoomboxChannel, setBoomboxEnabled } from '../../services/boomboxStorageService.js';
-import { getBoomboxRuntimeStatus } from '../../services/boomboxService.js';
+import { getBoomboxConfig, getBoomboxHistory, resetBoomboxConfig, setBoomboxChannel, setBoomboxEnabled } from '../../services/boomboxStorageService.js';
+import { getBoomboxRuntimeStatus, startBoomboxService } from '../../services/boomboxService.js';
 
 function ensureAdmin(interaction) {
     if (!interaction.inGuild()) throw new Error('Command hanya bisa digunakan di server.');
@@ -14,28 +14,28 @@ export default {
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
         .addSubcommand((sub) => sub
             .setName('channel')
-            .setDescription('Pilih channel khusus converter.')
+            .setDescription('Tentukan channel converter.')
             .addChannelOption((opt) => opt
                 .setName('channel')
-                .setDescription('Channel converter.')
+                .setDescription('URL hanya akan diproses pada channel ini.')
                 .addChannelTypes(ChannelType.GuildText)
                 .setRequired(true)))
         .addSubcommand((sub) => sub.setName('enable').setDescription('Aktifkan converter.'))
         .addSubcommand((sub) => sub.setName('disable').setDescription('Nonaktifkan converter.'))
         .addSubcommand((sub) => sub.setName('status').setDescription('Lihat status converter.'))
-        .addSubcommand((sub) => sub.setName('test').setDescription('Cek yt-dlp dan FFmpeg tanpa melakukan upload.'))
+        .addSubcommand((sub) => sub.setName('test').setDescription('Test engine yt-dlp dan FFmpeg.'))
         .addSubcommand((sub) => sub.setName('reset').setDescription('Reset konfigurasi converter.')),
 
     async execute(interaction) {
         try {
             ensureAdmin(interaction);
-            const guildId = interaction.guildId;
             const action = interaction.options.getSubcommand();
+            const guildId = interaction.guildId;
 
             if (action === 'channel') {
                 const channel = interaction.options.getChannel('channel', true);
                 const config = await setBoomboxChannel(interaction.client, guildId, channel.id);
-                await interaction.reply(`📻 Channel Boombox diset ke ${channel}. Status: ${config.enabled ? '🟢 Aktif' : '⚪ Nonaktif'}.`);
+                await interaction.reply(`✅ Channel Boombox diset ke ${channel}. Status: ${config.enabled ? '🟢 Aktif' : '⚪ Nonaktif'}.`);
                 return;
             }
 
@@ -46,15 +46,14 @@ export default {
                     return;
                 }
                 const config = await setBoomboxEnabled(interaction.client, guildId, true);
-                const { startBoomboxService } = await import('../../services/boomboxService.js');
                 startBoomboxService(interaction.client);
-                await interaction.reply(`✅ SKAW Boombox aktif di <#${config.channelId}>. Gunakan \/bb atau !bb.`);
+                await interaction.reply(`✅ SKAW Boombox **aktif** di <#${config.channelId}>. Gunakan \\`!bb <URL>\\` atau \\`/bb\\`.`);
                 return;
             }
 
             if (action === 'disable') {
                 const config = await setBoomboxEnabled(interaction.client, guildId, false);
-                await interaction.reply(`⏸️ SKAW Boombox dinonaktifkan. Channel tetap <#${config.channelId}>.`);
+                await interaction.reply(`⏸️ SKAW Boombox **nonaktif**. Channel tetap <#${config.channelId || 'unknown'}>.`);
                 return;
             }
 
@@ -69,17 +68,17 @@ export default {
                 try {
                     const { ensureConverterReady } = await import('../../services/boomboxConversionService.js');
                     const ready = await ensureConverterReady();
-                    await interaction.editReply(`✅ Converter engine siap.\nFFmpeg: ${ready.ffmpeg}\nyt-dlp: ${ready.version}`);
+                    await interaction.editReply(`✅ Converter engine siap.\nFFmpeg: \\`${ready.ffmpeg}\\`\nyt-dlp: \\`${ready.ytdlp}\\``);
                 } catch (error) {
-                    const message = error instanceof Error ? error.message : String(error);
-                    await interaction.editReply(`❌ Converter engine belum siap.\n${message}`);
+                    const text = error instanceof Error ? error.message : String(error);
+                    await interaction.editReply(`❌ Converter engine belum siap.\n${text}\n\nPastikan dependency Boombox sudah di-install pada repo: \\`npm install ffmpeg-static@5.3.0 yt-dlp-wrap-plus@2.5.0 form-data@4.0.4\\``);
                 }
                 return;
             }
 
             const config = await getBoomboxConfig(interaction.client, guildId);
             const live = getBoomboxRuntimeStatus(interaction.client);
-            const history = await (await import('../../services/boomboxStorageService.js')).getBoomboxHistory(interaction.client, guildId);
+            const history = await getBoomboxHistory(interaction.client, guildId);
             await interaction.reply({
                 embeds: [{
                     title: '📻 SKAW BOOMBOX • STATUS',
@@ -88,18 +87,19 @@ export default {
                         { name: 'Channel', value: config.channelId ? `<#${config.channelId}>` : '`Belum diatur`', inline: true },
                         { name: 'Queue', value: `${live.queue}/${config.queueLimit}`, inline: true },
                         { name: 'Processing', value: `${live.processing}/${live.maxConcurrent}`, inline: true },
-                        { name: 'Riwayat', value: String(history.length), inline: true },
-                        { name: 'Platform', value: 'YouTube • TikTok • Spotify • SoundCloud', inline: true },
+                        { name: 'History', value: String(history.length), inline: true },
+                        { name: 'Cooldown', value: `${config.cooldownSeconds}s`, inline: true },
+                        { name: 'Supported', value: 'YouTube • TikTok • Spotify • SoundCloud', inline: false },
                     ],
-                    footer: { text: 'Prefix: !bb • Slash: /bb • Re-convert: ulang:true' },
+                    footer: { text: 'Convert: !bb <URL> • /bb • Re-convert: !bb ulang <URL Top4toP>' },
                 }],
             });
         } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
+            const text = error instanceof Error ? error.message : String(error);
             if (interaction.replied || interaction.deferred) {
-                await interaction.followUp({ content: `❌ ${message}`, ephemeral: true }).catch(() => {});
+                await interaction.followUp({ content: `❌ ${text}`, ephemeral: true }).catch(() => {});
             } else {
-                await interaction.reply({ content: `❌ ${message}`, ephemeral: true }).catch(() => {});
+                await interaction.reply({ content: `❌ ${text}`, ephemeral: true }).catch(() => {});
             }
         }
     },
