@@ -1,156 +1,167 @@
 import fs from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import os from 'node:os';
-import crypto from 'node:crypto';
-import axios from 'axios';
-import youtubedl from 'youtube-dl-exec';
+import { fileURLToPath } from 'node:url';
 import ffmpegPath from 'ffmpeg-static';
-import { detectBoomboxPlatform, sanitizeBoomboxFileName } from '../utils/boomboxUrl.js';
-import { getBoomboxCache, setBoomboxCache } from './boomboxStorageService.js';
-import { uploadToTop4Top } from './top4topService.js';
+import { uploadMp3ToTop4Top } from './top4topService.js';
+import { detectBoomboxPlatform } from '../utils/boomboxPlatform.js';
 
-const MAX_DURATION_SECONDS = 20 * 60;
-const MAX_FILE_MB = 95;
+let YTDlpWrapClass = null;
+let ytDlpBinaryPath = null;
+let ytDlpInstancePromise = null;
 
-function assertDuration(seconds) {
-    if (seconds == null || !Number.isFinite(Number(seconds))) return;
-    if (Number(seconds) > MAX_DURATION_SECONDS) {
-        throw new Error(`Audio is too long. Maximum allowed duration is ${Math.floor(MAX_DURATION_SECONDS / 60)} minutes.`);
+function cleanName(value) {
+    return String(value || 'SKAW-Boombox')
+        .replace(/[<>:"/\\|?*\u0000-\u001F]/g, '_')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 90) || 'SKAW-Boombox';
+}
+
+function platformBinaryName() {
+    if (process.platform === 'win32') return 'yt-dlp.exe';
+    return 'yt-dlp';
+}
+
+function ytPlatform() {
+    if (process.platform === 'win32') return 'win32';
+    if (process.platform === 'darwin') return 'darwin';
+    return 'linux';
+}
+
+async function loadYtDlp() {
+    if (!YTDlpWrapClass) {
+        const module = await import('yt-dlp-wrap-plus');
+        YTDlpWrapClass = module.default ?? module;
     }
-}
 
-function metadataFromInfo(info, platform) {
-    const title = String(info?.track || info?.title || 'Unknown Title').trim();
-    const artist = String(info?.artist || info?.uploader || info?.creator || 'Unknown Artist').trim();
-    const durationSeconds = info?.duration == null ? null : Math.round(Number(info.duration));
-    assertDuration(durationSeconds);
-    return { title, artist, durationSeconds, platform };
-}
+    if (!ytDlpBinaryPath) {
+        const runtimeDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../.runtime');
+        await fs.mkdir(runtimeDir, { recursive: true });
+        ytDlpBinaryPath = path.join(runtimeDir, platformBinaryName());
+    }
 
-async function getYtDlpInfo(url) {
-    return youtubedl(url, {
-        dumpSingleJson: true,
-        noWarnings: true,
-        noPlaylist: true,
-        skipDownload: true,
-        noCheckCertificates: true,
-    });
-}
-
-async function downloadAudio(url, outputDir, baseName) {
-    const outputTemplate = path.join(outputDir, `${baseName}.%(ext)s`);
-    await youtubedl(url, {
-        extractAudio: true,
-        audioFormat: 'mp3',
-        audioQuality: '192K',
-        noPlaylist: true,
-        noWarnings: true,
-        noCheckCertificates: true,
-        output: outputTemplate,
-        ffmpegLocation: ffmpegPath || undefined,
-        restrictFilenames: true,
-        maxFilesize: `${MAX_FILE_MB}M`,
-    });
-
-    const expected = path.join(outputDir, `${baseName}.mp3`);
     try {
-        await fs.access(expected);
-        return expected;
+        const stat = await fs.stat(ytDlpBinaryPath);
+        if (!stat.isFile() || stat.size < 1_000_000) throw new Error('yt-dlp binary invalid');
     } catch {
-        const files = await fs.readdir(outputDir);
-        const match = files.find((file) => file.toLowerCase().endsWith('.mp3'));
-        if (!match) throw new Error('Audio conversion completed but no MP3 file was produced.');
-        return path.join(outputDir, match);
+        const version = process.env.BOOMBOX_YTDLP_VERSION || '';
+        await YTDlpWrapClass.downloadFromGithub(ytDlpBinaryPath, version, ytPlatform(), true);
+        await fs.chmod(ytDlpBinaryPath, 0o755).catch(() => {});
     }
+
+    if (!ytDlpInstancePromise) {
+        ytDlpInstancePromise = Promise.resolve(new YTDlpWrapClass(ytDlpBinaryPath));
+    }
+
+    return await ytDlpInstancePromise;
 }
 
-async function spotifyMetadata(url) {
-    const response = await axios.get('https://open.spotify.com/oembed', {
-        params: { url },
-        timeout: 15000,
-        headers: { 'User-Agent': 'SKAW-GROUP-TitanBot-Boombox/1.0' },
-    });
-
-    const rawTitle = String(response.data?.title || '').trim();
-    if (!rawTitle) throw new Error('Could not read Spotify track metadata.');
-
-    return rawTitle;
+function normalizeInfo(info) {
+    const durationSeconds = Number(info?.duration || 0);
+    const title = cleanName(info?.title || info?.track || 'SKAW Boombox');
+    const artist = cleanName(info?.artist || info?.creator || info?.uploader || info?.channel || 'Unknown');
+    return { title, artist, durationSeconds };
 }
 
-async function spotifyToMatchedYoutube(url) {
-    const title = await spotifyMetadata(url);
-    const searchInfo = await getYtDlpInfo(`ytsearch1:${title}`);
-    const entry = searchInfo?.entries?.[0];
-    if (!entry?.webpage_url) {
-        throw new Error('Could not find a matching playable source for this Spotify track.');
+async function getInfo(ytdlp, url) {
+    const info = await ytdlp.getVideoInfo(url);
+    return info;
+}
+
+async function spotifyResolve(ytdlp, url) {
+    const oembed = await fetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(url)}`);
+    if (!oembed.ok) throw new Error(`Spotify metadata gagal (HTTP ${oembed.status}).`);
+    const data = await oembed.json();
+    const title = String(data.title || '').trim();
+    if (!title) throw new Error('Spotify tidak memberikan judul track.');
+
+    const search = await ytdlp.execPromise([
+        `ytsearch1:${title}`,
+        '--flat-playlist',
+        '--skip-download',
+        '--no-warnings',
+        '--dump-single-json',
+    ]);
+
+    const parsed = JSON.parse(String(search));
+    const entry = parsed?.entries?.[0];
+    if (!entry?.webpage_url && !entry?.url) {
+        throw new Error('Track Spotify berhasil dibaca, tetapi tidak ditemukan sumber publik yang cocok.');
     }
 
     return {
-        sourceUrl: entry.webpage_url,
-        metadata: {
-            title,
-            artist: String(entry.artist || entry.uploader || 'Spotify match').trim(),
-            durationSeconds: entry.duration == null ? null : Math.round(Number(entry.duration)),
-            platform: 'spotify',
-        },
-        matchedSource: true,
+        sourceUrl: entry.webpage_url || entry.url,
+        spotifyTitle: title,
     };
 }
 
-export async function convertBoomboxUrl(client, guildId, rawUrl) {
-    const detected = detectBoomboxPlatform(rawUrl);
-    if (!detected) {
-        throw new Error('Unsupported URL. Only YouTube, TikTok, Spotify, and SoundCloud are supported.');
-    }
+async function downloadMp3(ytdlp, sourceUrl, outputDir, title) {
+    const template = path.join(outputDir, `${cleanName(title)}.%(ext)s`);
+    await ytdlp.execPromise([
+        sourceUrl,
+        '--no-playlist',
+        '--extract-audio',
+        '--audio-format', 'mp3',
+        '--audio-quality', '192K',
+        '--restrict-filenames',
+        '--newline',
+        '--no-warnings',
+        '--max-filesize', `${Number(process.env.BOOMBOX_MAX_FILE_MB || 95)}M`,
+        '--ffmpeg-location', String(ffmpegPath),
+        '--output', template,
+    ]);
 
-    const sourceUrl = detected.url;
-    const cacheKey = crypto.createHash('sha256').update(sourceUrl).digest('hex');
-    const cached = await getBoomboxCache(client, guildId, cacheKey);
-    if (cached) return { ...cached, cached: true };
-
-    const tempDir = path.join(os.tmpdir(), `skaw-boombox-${crypto.randomUUID()}`);
-    await fs.mkdir(tempDir, { recursive: true });
-
-    try {
-        let extractionUrl = sourceUrl;
-        let metadata;
-        let matchedSource = false;
-
-        if (detected.platform === 'spotify') {
-            const spotifyResult = await spotifyToMatchedYoutube(sourceUrl);
-            extractionUrl = spotifyResult.sourceUrl;
-            metadata = spotifyResult.metadata;
-            matchedSource = spotifyResult.matchedSource;
-            assertDuration(metadata.durationSeconds);
-        } else {
-            const info = await getYtDlpInfo(sourceUrl);
-            metadata = metadataFromInfo(info, detected.platform);
-        }
-
-        const baseName = sanitizeBoomboxFileName(`${metadata.artist} - ${metadata.title}`)
-            .replace(/[^a-zA-Z0-9 _-]/g, '') || 'skaw-audio';
-        const filePath = await downloadAudio(extractionUrl, tempDir, baseName);
-        const stat = await fs.stat(filePath);
-        if (stat.size > MAX_FILE_MB * 1024 * 1024) {
-            throw new Error(`Converted MP3 is larger than ${MAX_FILE_MB} MB.`);
-        }
-
-        const top4topUrl = await uploadToTop4Top(filePath, `${baseName}.mp3`);
-        const cachedItem = await setBoomboxCache(client, guildId, cacheKey, {
-            sourceUrl,
-            platform: detected.platform,
-            title: metadata.title,
-            artist: metadata.artist,
-            durationSeconds: metadata.durationSeconds,
-            top4topUrl,
-        });
-
-        return { ...cachedItem, cached: false, matchedSource };
-    } finally {
-        await fs.rm(tempDir, { recursive: true, force: true }).catch(() => null);
-    }
+    const files = await fs.readdir(outputDir);
+    const mp3 = files.find((name) => name.toLowerCase().endsWith('.mp3'));
+    if (!mp3) throw new Error('yt-dlp selesai tetapi file MP3 tidak ditemukan.');
+    return path.join(outputDir, mp3);
 }
 
-export function getBoomboxLimits() {
-    return { maxDurationSeconds: MAX_DURATION_SECONDS, maxFileMb: MAX_FILE_MB };
+export async function convertToBoombox(url, options = {}) {
+    const platform = detectBoomboxPlatform(url);
+    if (!platform) throw new Error('URL bukan platform yang didukung.');
+
+    const ytdlp = await loadYtDlp();
+    const maxDuration = Number(options.maxDurationSeconds || process.env.BOOMBOX_MAX_DURATION_SECONDS || 1200);
+
+    let sourceUrl = url;
+    let info = await getInfo(ytdlp, url);
+
+    if (platform === 'spotify') {
+        const resolved = await spotifyResolve(ytdlp, url);
+        sourceUrl = resolved.sourceUrl;
+        info = await getInfo(ytdlp, sourceUrl);
+        info.title = resolved.spotifyTitle || info.title;
+    }
+
+    const meta = normalizeInfo(info);
+    if (!meta.durationSeconds || meta.durationSeconds > maxDuration) {
+        throw new Error(`Durasi ${meta.durationSeconds ? `${Math.ceil(meta.durationSeconds / 60)} menit` : 'tidak diketahui'} melewati batas ${Math.ceil(maxDuration / 60)} menit.`);
+    }
+
+    const sourceKey = createHash('sha256').update(url).digest('hex');
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'skaw-boombox-'));
+
+    try {
+        const filePath = await downloadMp3(ytdlp, sourceUrl, tmpRoot, meta.title);
+        const stat = await fs.stat(filePath);
+        const maxBytes = Number(options.maxFileMb || process.env.BOOMBOX_MAX_FILE_MB || 95) * 1024 * 1024;
+        if (stat.size > maxBytes) throw new Error(`File MP3 melebihi batas ${maxBytes / 1024 / 1024} MB.`);
+
+        const directUrl = await uploadMp3ToTop4Top(filePath, `${meta.title}.mp3`);
+        return {
+            sourceKey,
+            platform,
+            title: meta.title,
+            artist: meta.artist,
+            durationSeconds: meta.durationSeconds,
+            format: 'MP3',
+            url: directUrl,
+            sizeBytes: stat.size,
+        };
+    } finally {
+        await fs.rm(tmpRoot, { recursive: true, force: true }).catch(() => {});
+    }
 }
