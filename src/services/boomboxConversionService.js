@@ -3,35 +3,30 @@ import path from 'node:path';
 import os from 'node:os';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import ffmpegPath from 'ffmpeg-static';
+import ffmpegStatic from 'ffmpeg-static';
 import { uploadMp3ToTop4Top } from './top4topService.js';
-import { detectBoomboxPlatform, normalizeSourceUrl } from '../utils/boomboxPlatform.js';
+import { detectBoomboxPlatform, normalizeSourceUrl, sanitizeFileName } from '../utils/boomboxPlatform.js';
 
-let YTDlpWrapClass = null;
+let YTDlpWrap = null;
 let ytdlpPathPromise = null;
-let ytdlpInstancePromise = null;
+let ytdlpPromise = null;
 
-function cleanText(value, fallback = 'Unknown') {
-    const text = String(value || '').replace(/[<>]/g, '').replace(/\s+/g, ' ').trim();
-    return (text || fallback).slice(0, 180);
+async function loadWrapper() {
+    if (!YTDlpWrap) {
+        const mod = await import('yt-dlp-wrap-plus');
+        YTDlpWrap = mod.default ?? mod;
+    }
+    return YTDlpWrap;
 }
 
-function executableName() {
-    return process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp';
-}
-
-function ytPlatform() {
+function platformName() {
     if (process.platform === 'win32') return 'win32';
     if (process.platform === 'darwin') return 'darwin';
     return 'linux';
 }
 
-async function loadWrapper() {
-    if (!YTDlpWrapClass) {
-        const mod = await import('yt-dlp-wrap-plus');
-        YTDlpWrapClass = mod.default ?? mod;
-    }
-    return YTDlpWrapClass;
+function binaryName() {
+    return process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp';
 }
 
 async function ensureYtDlp() {
@@ -40,47 +35,52 @@ async function ensureYtDlp() {
             const configured = String(process.env.BOOMBOX_YTDLP_PATH || '').trim();
             if (configured) return configured;
 
-            const YTDlpWrap = await loadWrapper();
+            const Wrapper = await loadWrapper();
             const runtimeDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../.runtime');
+            const binaryPath = path.join(runtimeDir, binaryName());
             await fs.mkdir(runtimeDir, { recursive: true });
-            const outputPath = path.join(runtimeDir, executableName());
 
             try {
-                const stat = await fs.stat(outputPath);
-                if (stat.isFile() && stat.size > 1_000_000) return outputPath;
+                const stat = await fs.stat(binaryPath);
+                if (stat.isFile() && stat.size > 1_000_000) return binaryPath;
             } catch {}
 
             const version = String(process.env.BOOMBOX_YTDLP_VERSION || '').trim();
-            await YTDlpWrap.downloadFromGithub(outputPath, version, ytPlatform(), true);
-            await fs.chmod(outputPath, 0o755).catch(() => {});
-            return outputPath;
+            await Wrapper.downloadFromGithub(binaryPath, version, platformName(), true);
+            await fs.chmod(binaryPath, 0o755).catch(() => {});
+            return binaryPath;
         })();
     }
     return await ytdlpPathPromise;
 }
 
 async function getYtDlp() {
-    if (!ytdlpInstancePromise) {
-        ytdlpInstancePromise = (async () => {
-            const YTDlpWrap = await loadWrapper();
+    if (!ytdlpPromise) {
+        ytdlpPromise = (async () => {
+            const Wrapper = await loadWrapper();
             const binary = await ensureYtDlp();
-            return new YTDlpWrap(binary);
+            return new Wrapper(binary);
         })();
     }
-    return await ytdlpInstancePromise;
+    return await ytdlpPromise;
 }
 
-function parseDuration(info) {
+function clean(value, fallback) {
+    const text = String(value || '').replace(/[<>]/g, '').replace(/\s+/g, ' ').trim();
+    return (text || fallback).slice(0, 180);
+}
+
+function durationFromInfo(info) {
     const value = Number(info?.duration);
-    return Number.isFinite(value) && value > 0 ? value : 0;
+    return Number.isFinite(value) && value > 0 ? Math.round(value) : 0;
 }
 
-async function infoFromYtDlp(ytdlp, url) {
+async function infoFor(ytdlp, url) {
     const raw = await ytdlp.execPromise([
         url,
         '--no-playlist',
-        '--dump-single-json',
         '--skip-download',
+        '--dump-single-json',
         '--no-warnings',
     ]);
     const text = String(raw || '').trim();
@@ -88,57 +88,50 @@ async function infoFromYtDlp(ytdlp, url) {
         return JSON.parse(text);
     } catch {
         const lines = text.split('\n').map((line) => line.trim()).filter(Boolean);
-        for (let index = lines.length - 1; index >= 0; index -= 1) {
-            try {
-                return JSON.parse(lines[index]);
-            } catch {}
+        for (let i = lines.length - 1; i >= 0; i -= 1) {
+            try { return JSON.parse(lines[i]); } catch {}
         }
-        throw new Error('yt-dlp tidak mengembalikan metadata JSON yang valid.');
     }
+    throw new Error('yt-dlp tidak mengembalikan metadata yang valid.');
 }
 
 async function resolveSpotify(ytdlp, spotifyUrl) {
     const response = await fetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(spotifyUrl)}`, {
-        headers: { 'User-Agent': 'SKAW-Boombox/3.0' },
+        headers: { 'User-Agent': 'SKAW-GROUP-Boombox/4.0' },
     });
-    if (!response.ok) throw new Error(`Metadata Spotify gagal (HTTP ${response.status}).`);
+    if (!response.ok) throw new Error(`Spotify metadata gagal (HTTP ${response.status}).`);
 
     const data = await response.json();
-    const title = cleanText(data.title, 'Spotify Track');
-    const artist = cleanText(data.author_name, 'Unknown');
-    const query = `${title} ${artist}`.trim();
+    const title = clean(data.title, 'Spotify Track');
+    const artist = clean(data.author_name, 'Unknown Artist');
 
     const raw = await ytdlp.execPromise([
-        `ytsearch1:${query}`,
+        `ytsearch1:${title} ${artist}`,
         '--flat-playlist',
         '--skip-download',
-        '--no-warnings',
         '--dump-single-json',
+        '--no-warnings',
     ]);
 
     let parsed;
-    try {
-        parsed = JSON.parse(String(raw));
-    } catch {
-        throw new Error('Spotify berhasil dibaca, tetapi pencarian sumber publik tidak mengembalikan hasil valid.');
-    }
-
+    try { parsed = JSON.parse(String(raw)); } catch { parsed = null; }
     const entry = parsed?.entries?.[0];
     if (!entry?.webpage_url && !entry?.url) {
-        throw new Error('Track Spotify ditemukan tetapi sumber audio publik yang cocok tidak tersedia.');
+        throw new Error('Track Spotify terbaca, tetapi sumber audio publik yang cocok tidak ditemukan.');
     }
 
     return {
         sourceUrl: entry.webpage_url || entry.url,
-        spotifyTitle: title,
-        spotifyArtist: artist,
-        thumbnail: data.thumbnail_url || null,
+        title,
+        artist,
+        thumbnail: data.thumbnail_url || entry.thumbnail || null,
     };
 }
 
-async function downloadMp3(ytdlp, sourceUrl, outputDir, baseName, reportProgress) {
-    const template = path.join(outputDir, `${baseName}.%(ext)s`);
-    await reportProgress('download', '⏳ Sedang mendownload audio...');
+async function downloadMp3(ytdlp, sourceUrl, title, tempDir, maxMb, progress) {
+    const safeName = sanitizeFileName(title);
+    const output = path.join(tempDir, `${safeName}.%(ext)s`);
+    await progress('download', '⬇️ Sedang mendownload audio...');
 
     await ytdlp.execPromise([
         sourceUrl,
@@ -146,94 +139,84 @@ async function downloadMp3(ytdlp, sourceUrl, outputDir, baseName, reportProgress
         '--extract-audio',
         '--audio-format', 'mp3',
         '--audio-quality', '192K',
-        '--restrict-filenames',
-        '--newline',
         '--no-warnings',
+        '--restrict-filenames',
         '--no-part',
-        '--output', template,
-        '--max-filesize', `${Number(process.env.BOOMBOX_MAX_FILE_MB || 95)}M`,
-        '--ffmpeg-location', String(ffmpegPath),
+        '--output', output,
+        '--max-filesize', `${maxMb}M`,
+        '--ffmpeg-location', String(ffmpegStatic),
     ]);
 
-    await reportProgress('convert', '🎚️ Download selesai. Sedang memastikan format MP3...');
-    const names = await fs.readdir(outputDir);
-    const mp3Name = names.find((name) => name.toLowerCase().endsWith('.mp3'));
-    if (!mp3Name) throw new Error('Konversi selesai tetapi file MP3 tidak ditemukan.');
-    return path.join(outputDir, mp3Name);
+    const files = await fs.readdir(tempDir);
+    const mp3 = files.find((name) => name.toLowerCase().endsWith('.mp3'));
+    if (!mp3) throw new Error('File MP3 tidak ditemukan setelah proses conversion.');
+    return path.join(tempDir, mp3);
 }
 
 export async function ensureConverterReady() {
-    if (!ffmpegPath) throw new Error('FFmpeg binary tidak tersedia dari ffmpeg-static.');
-    await fs.access(ffmpegPath);
-    const binary = await ensureYtDlp();
-    await fs.access(binary);
+    if (!ffmpegStatic) throw new Error('ffmpeg-static tidak tersedia. Jalankan npm install ffmpeg-static@5.3.0.');
+    await fs.access(ffmpegStatic);
     const ytdlp = await getYtDlp();
     const version = await ytdlp.getVersion();
-    return { ffmpeg: ffmpegPath, ytDlp: binary, version: String(version).trim() };
+    return { ffmpeg: ffmpegStatic, ytdlp: String(version).trim() };
 }
 
-export async function convertToBoombox(url, options = {}, reportProgress = async () => {}) {
-    const normalizedUrl = normalizeSourceUrl(url);
-    const platform = detectBoomboxPlatform(normalizedUrl);
-    if (!normalizedUrl || !platform) throw new Error('URL sumber tidak didukung.');
+export async function convertToBoombox(sourceUrl, config, progress = async () => {}) {
+    const normalized = normalizeSourceUrl(sourceUrl);
+    const platform = detectBoomboxPlatform(normalized);
+    if (!normalized || !platform) throw new Error('URL sumber tidak didukung. Gunakan YouTube, TikTok, Spotify, atau SoundCloud.');
 
-    await reportProgress('prepare', '🔎 Sedang membaca informasi audio...');
     const ytdlp = await getYtDlp();
+    await progress('metadata', '🔎 Sedang membaca informasi audio...');
 
-    let sourceUrl = normalizedUrl;
+    let playableUrl = normalized;
     let info;
-    let spotifyTitle = '';
-    let spotifyArtist = '';
-    let spotifyThumbnail = null;
+    let titleOverride = '';
+    let artistOverride = '';
+    let thumbnail = null;
 
     if (platform === 'spotify') {
-        const spotify = await resolveSpotify(ytdlp, normalizedUrl);
-        sourceUrl = spotify.sourceUrl;
-        spotifyTitle = spotify.spotifyTitle;
-        spotifyArtist = spotify.spotifyArtist;
-        spotifyThumbnail = spotify.thumbnail;
-        await reportProgress('prepare', '🔎 Spotify terbaca. Mencari sumber audio publik yang cocok...');
+        const resolved = await resolveSpotify(ytdlp, normalized);
+        playableUrl = resolved.sourceUrl;
+        titleOverride = resolved.title;
+        artistOverride = resolved.artist;
+        thumbnail = resolved.thumbnail;
     }
 
-    info = await infoFromYtDlp(ytdlp, sourceUrl);
-    const durationSeconds = parseDuration(info);
-    const maxDuration = Number(options.maxDurationSeconds || process.env.BOOMBOX_MAX_DURATION_SECONDS || 1200);
+    info = await infoFor(ytdlp, playableUrl);
+    const durationSeconds = durationFromInfo(info);
     if (!durationSeconds) throw new Error('Durasi audio tidak dapat dibaca.');
-    if (durationSeconds > maxDuration) {
-        throw new Error(`Durasi terlalu panjang (${Math.ceil(durationSeconds / 60)} menit). Batas ${Math.ceil(maxDuration / 60)} menit.`);
+    if (durationSeconds > config.maxDurationSeconds) {
+        throw new Error(`Durasi terlalu panjang (${Math.ceil(durationSeconds / 60)} menit). Maksimal ${Math.ceil(config.maxDurationSeconds / 60)} menit.`);
     }
 
-    const title = cleanText(spotifyTitle || info.title, 'SKAW Boombox');
-    const artist = cleanText(spotifyArtist || info.artist || info.creator || info.uploader || info.channel, 'Unknown');
-    const thumbnail = spotifyThumbnail || info.thumbnail || null;
-    const sourceKey = createHash('sha256').update(normalizedUrl).digest('hex');
+    const title = clean(titleOverride || info.title, 'SKAW Boombox');
+    const artist = clean(artistOverride || info.artist || info.creator || info.uploader || info.channel, 'Unknown Artist');
+    thumbnail ||= info.thumbnail || null;
+    const sourceKey = createHash('sha256').update(normalized).digest('hex');
 
-    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'skaw-boombox-'));
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'skaw-boombox-'));
     try {
-        const filePath = await downloadMp3(ytdlp, sourceUrl, tempDir, title.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 90), reportProgress);
+        const filePath = await downloadMp3(ytdlp, playableUrl, `${artist} - ${title}`, tmp, config.maxFileMb, progress);
         const stat = await fs.stat(filePath);
-        const maxMb = Number(options.maxFileMb || process.env.BOOMBOX_MAX_FILE_MB || 95);
-        if (stat.size > maxMb * 1024 * 1024) {
-            throw new Error(`File MP3 melebihi batas ${maxMb} MB.`);
-        }
+        if (stat.size > config.maxFileMb * 1024 * 1024) throw new Error(`File MP3 melebihi ${config.maxFileMb} MB.`);
 
-        await reportProgress('upload', '☁️ MP3 siap. Sedang upload ke Top4toP...');
-        const directUrl = await uploadMp3ToTop4Top(filePath, `${title}.mp3`);
-        await reportProgress('done', '✅ Upload Top4toP berhasil dan direct HTTP MP3 sudah tervalidasi.');
+        await progress('upload', '☁️ Audio siap. Sedang upload ke Top4toP...');
+        const directUrl = await uploadMp3ToTop4Top(filePath, `${sanitizeFileName(`${artist} - ${title}`)}.mp3`);
+        await progress('done', '✅ Upload selesai dan URL HTTP direct sudah tervalidasi.');
 
         return {
-            sourceUrl: normalizedUrl,
+            sourceUrl: normalized,
             sourceKey,
             platform,
             title,
             artist,
             durationSeconds,
             thumbnail,
-            format: 'MP3',
-            url: directUrl,
+            directUrl,
             sizeBytes: stat.size,
         };
     } finally {
-        await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+        await fs.rm(tmp, { recursive: true, force: true }).catch(() => {});
     }
 }
