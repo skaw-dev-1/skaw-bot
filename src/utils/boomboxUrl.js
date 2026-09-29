@@ -1,43 +1,55 @@
-const HOSTS = {
-    youtube: new Set(['youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com', 'youtu.be']),
-    tiktok: new Set(['tiktok.com', 'www.tiktok.com', 'm.tiktok.com', 'vm.tiktok.com', 'vt.tiktok.com']),
-    spotify: new Set(['open.spotify.com', 'spotify.com', 'www.spotify.com']),
-    soundcloud: new Set(['soundcloud.com', 'www.soundcloud.com', 'on.soundcloud.com', 'm.soundcloud.com']),
-};
+const DIRECT_URL_RE = /^http:\/\/[^\s/]+\/[^\s]*\.mp3(?:\?[^\s]*)?$/i;
 
-export function normalizeBoomboxUrl(raw) {
-    const value = String(raw || '').trim().replace(/^<|>$/g, '');
-    if (!/^https?:\/\//i.test(value)) return null;
-
+export function normalizeHttpBoomboxUrl(url) {
+    if (!url) return null;
     try {
-        const url = new URL(value);
-        url.hash = '';
-        return url.toString();
+        const parsed = new URL(String(url).trim());
+        parsed.protocol = 'http:';
+        return parsed.toString();
     } catch {
         return null;
     }
 }
 
-export function detectBoomboxPlatform(raw) {
-    const normalized = normalizeBoomboxUrl(raw);
-    if (!normalized) return null;
+export function isDirectHttpMp3Url(url) {
+    return DIRECT_URL_RE.test(String(url || '').trim());
+}
 
-    const host = new URL(normalized).hostname.toLowerCase();
-    for (const [platform, hosts] of Object.entries(HOSTS)) {
-        if (hosts.has(host)) return { platform, url: normalized };
+export async function validateDirectAudioUrl(url) {
+    if (!isDirectHttpMp3Url(url)) {
+        throw new Error('URL hasil bukan direct HTTP MP3.');
     }
-    return null;
-}
 
-export function extractBoomboxUrls(content) {
-    const matches = String(content || '').match(/https?:\/\/[^\s<>]+/gi) || [];
-    return [...new Set(matches.map(normalizeBoomboxUrl).filter(Boolean))];
-}
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12_000);
 
-export function sanitizeBoomboxFileName(value) {
-    return String(value || 'audio')
-        .replace(/[<>:"/\\|?*\x00-\x1F]/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .slice(0, 120) || 'skaw-audio';
+    try {
+        const response = await fetch(url, {
+            method: 'GET',
+            redirect: 'manual',
+            headers: { Range: 'bytes=0-1' },
+            signal: controller.signal,
+        });
+
+        if ([301, 302, 303, 307, 308].includes(response.status)) {
+            throw new Error('Server mengalihkan URL HTTP ke HTTPS/URL lain.');
+        }
+
+        if (![200, 206].includes(response.status)) {
+            throw new Error(`URL audio tidak bisa diakses (HTTP ${response.status}).`);
+        }
+
+        const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+        const allowed = contentType.includes('audio/mpeg')
+            || contentType.includes('audio/mp3')
+            || contentType.includes('application/octet-stream');
+
+        if (!allowed) {
+            throw new Error(`Content-Type bukan audio MP3 (${contentType || 'unknown'}).`);
+        }
+
+        return true;
+    } finally {
+        clearTimeout(timeout);
+    }
 }
