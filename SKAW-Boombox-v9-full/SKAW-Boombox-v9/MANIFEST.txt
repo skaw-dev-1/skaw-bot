@@ -1,0 +1,24 @@
+SKAW Boombox v9.0.0
+
+Source:
+src/commands/Utility/bb.js
+src/commands/Utility/boombox-config.js
+src/services/boomboxService.js
+src/services/boomboxConversionService.js
+src/services/boomboxStorageService.js
+src/services/top4topService.js
+src/utils/boomboxPlatform.js
+src/utils/boomboxUrl.js
+
+Scripts:
+scripts/check-boombox-v9.mjs
+scripts/install-skaw-boombox-v9.mjs
+scripts/rollback-skaw-boombox-v9.mjs
+scripts/boombox-runtime-check-v9.mjs
+
+Integration:
+- package.json: engines.node >=22.0.0, ffmpeg-static 5.3.0, boombox:check script
+- .node-version: 22
+- src/app.js: startBoomboxService(this) hook
+
+The package does not include a yt-dlp binary. v9 downloads the official release asset at runtime and verifies its SHA-256 before execution.
