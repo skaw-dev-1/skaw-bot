@@ -1,0 +1,10 @@
+# Required for Railway/Railpack
+RAILPACK_NODE_VERSION=22
+
+# Optional
+# BOOMBOX_YTDLP_VERSION=2026.08.19
+# BOOMBOX_AUDIO_QUALITY=192K
+# BOOMBOX_YTDLP_PATH=/absolute/path/to/yt-dlp
+# BOOMBOX_RUNTIME_DIR=/absolute/path/to/a/writable/cache
+# BOOMBOX_YTDLP_COOKIES_FILE=/absolute/path/to/cookies.txt
+# BOOMBOX_YTDLP_PROXY=http://host:port

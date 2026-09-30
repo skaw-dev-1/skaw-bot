@@ -1,286 +1,222 @@
-# TitanBot - Ultimate Discord Bot
+# SKAW GROUP — Boombox Converter v9.0.0
 
-**TitanBot** is a powerful, feature-rich Discord bot designed to enhance your server experience with comprehensive moderation tools, engaging economy systems, utility features, and much more. Built with modern Discord.js v14 and PostgreSQL for optimal performance and data persistence.
+Rebuild baru untuk TitanBot/Discord.js v14. Fokus versi ini adalah runtime Railway yang stabil, diagnostik yang jelas, queue satu proses, progress embed, history untuk reroll, dan output direct `http://` Top4toP.
 
-[![Support Server](https://img.shields.io/badge/-Support%20Server-%235865F2?logo=discord&logoColor=white&style=flat-square&logoWidth=20)](https://discord.gg/8kJBYhTGW9)
-[![Discord.js](https://img.shields.io/npm/v/discord.js?style=flat-square&labelColor=%23202225&color=%23202225&logo=npm&logoColor=white&logoWidth=20)](https://www.npmjs.com/package/discord.js)
-![PostgreSQL](https://img.shields.io/badge/-PostgreSQL-%23336791?logo=postgresql&logoColor=white&style=flat-square&logoWidth=20)
+## Penting sebelum install
 
-## Table of Contents
+Versi yt-dlp yang dipin adalah `2026.08.19`. Release tersebut menyediakan binary Linux glibc dan binary Linux musl terpisah. Railway yang dipakai SKAW GROUP terdeteksi sebagai Linux x64 + musl, sehingga v9 memilih `yt-dlp_musllinux`; pada Linux glibc v9 memilih `yt-dlp_linux`.
 
-- [Features Overview](#features-overview)
-- [Quick Setup](#quick-setup)
-- [Manual Installation Steps](#manual-installation-steps)
-- [Support Server](https://discord.gg/QnWNz2dKCE)
-- [Required Bot Intents](#bot-intents)
-- [Contributing](CONTRIBUTING.md)
+Versi yt-dlp saat ini membutuhkan Node 22+ untuk JavaScript runtime YouTube/EJS. Karena itu v9 mengubah `package.json` menjadi `engines.node >=22.0.0` dan membuat `.node-version` berisi `22`.
 
-<a name="features-overview"></a>
-## Features Overview
+## Instalasi yang aman
 
-TitanBot offers a complete suite of tools for Discord server management and community engagement:
+**Jangan extract paket ini ke dalam repo sebagai folder yang akan ikut di-commit.** Cara yang disarankan:
 
-<table>
-<tr>
-<td width="50%" valign="top">
-
-### Moderation & Administration
-- **Mass Actions** - Bulk ban/kick capabilities
-- **User Notes** - Keep detailed moderation records
-- **Case Management** - View and track all mod actions
-
-### Economy System
-- **Shop & Inventory** - Buy and manage items
-- **Gambling** - Risk it for rewards
-- **Pay System** - Transfer money between users
-
-### Fun & Entertainment
-- **Random Facts** - Learn something new
-- **Wanted Poster** - Create fun wanted images
-- **Text Reversal** - Reverse any text
-
-### Advanced Ticket System
-- **Claim & Priority** - Staff ticket management
-- **Ticket Limits** - Prevent spam
-- **Transcript System** - Save ticket history
-
-### Server Stats
-- **Member Counter** - Live member count channels
-- **Voice Counters** - Track voice stats
-- **Dynamic Updates** - Real-time channel updates
-
-### Reaction Roles
-- **Role Assignment** - Self-assignable roles
-- **Emoji Selection** - Reaction-based system
-- **Multi-role Support** - Multiple role options
-
-</td>
-<td width="50%" valign="top">
-
-### Leveling & XP System
-- **XP Tracking** - Automatic message-based XP
-- **Level Roles** - Auto-assign roles by level
-- **Custom Configuration** - Personalize leveling
-
-### Giveaways & Events
-- **Multiple Winners** - Support multi-winner giveaways
-- **Auto Picking** - Automatic winner selection
-- **Reroll System** - Pick new winners if needed
-
-### Birthday System
-- **Birthday Tracking** - Never miss a birthday
-- **Auto Announcements** - Celebrate automatically
-- **Timezone Support** - Accurate worldwide tracking
-
-### Utility Tools
-- **Report System** - Report issues to staff
-- **Todo Lists** - Personal task management
-- **First Message** - Jump to channel's first message
-
-### Welcome System
-- **Welcome Messages** - Greet new members
-- **Auto Roles** - Assign roles on join
-- **Custom Embeds** - Personalized messages
-  
-### Music
-- **24/7 Mode** - Play music 24/7
-- **Interative Button System** - Manage music through buttons
-- **Supports EVERY platform** - Supports spotify, deezer, youtube, apple music
-  
-</td>
-</tr>
-</table>
-
-<a name="quick-setup"></a>
-## Quick Setup (Recommended for non-coders)
-
-### Video Tutorial
-For a detailed step-by-step setup guide, watch our comprehensive video tutorial:
-[**TitanBot Setup Tutorial**](https://www.youtube.com/@TouchDisc)
-
-## Docker Deployment (Recommended)
-
-TitanBot is fully containerized for easy deployment.
-
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/codebymitch/TitanBot.git
-   cd TitanBot
-   ```
-
-2. **Configure environment variables:**
-   ```bash
-   cp .env.example .env
-   ```
-   Set at minimum `DISCORD_TOKEN`, `CLIENT_ID`, and `GUILD_ID`. Docker Compose also reads `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB` from `.env` (defaults: `titanbot` / `password` / `titanbot`).
-
-3. **Build and start the containers:**
-   ```bash
-   docker compose up -d --build
-   ```
-
-4. **Check status:**
-   ```bash
-   docker compose ps
-   curl http://localhost:3000/health
-   ```
-
-This starts the bot and PostgreSQL. The compose file sets `POSTGRES_SSL=false` and `AUTO_MIGRATE=true` for the bundled database. Music uses public Lavalink v4 nodes from `lavalink/nodes.json` by default.
-
-### Music
-
-Music uses [Lavalink v4](https://github.com/lavalink-devs/Lavalink) via [Riffy](https://github.com/riffy-rb/riffy), similar to [Musicify](https://github.com/codebymitch/Musicify).
-
-1. By default, the bot loads multiple public v4 SSL nodes from [`lavalink/nodes.json`](lavalink/nodes.json) (sourced from [lavalink.darrennathanael.com](https://lavalink.darrennathanael.com/SSL/Lavalink-SSL/)). Edit that file to add or remove nodes.
-2. To self-host Lavalink instead, run `docker compose --profile local-lavalink up -d` and set single-node env vars in `.env`:
-   ```env
-   LAVALINK_HOST=lavalink
-   LAVALINK_PORT=2333
-   LAVALINK_PASSWORD=youshallnotpass
-   LAVALINK_SECURE=false
-   ```
-   Remove or rename `lavalink/nodes.json` so the bot falls back to those env vars.
-3. Override nodes inline with `LAVALINK_NODES` (JSON array) or point at another file with `LAVALINK_NODES_FILE`.
-4. Use `/play <song>` from a voice channel, or `/join` to connect without playing. Prefix shortcuts: `join`, `np`, `leave`, `pause`, `resume`, `skip`, `stop`, `volume <0-100>`, or `music <subcommand>`. Use `/nowplaying` and `/queue` for status; `/music` for loop, shuffle, seek, and other controls.
-
-### Using GitHub Container Registry
-
-The bot is automatically published to GitHub Container Registry on every push to main.
+1. Download `SKAW-Boombox-v9-full.zip`.
+2. Extract sebagai folder terpisah, misalnya `/workspaces/SKAW-Boombox-v9`.
+3. Buka terminal di root repo TitanBot `/workspaces/skaw-bot`.
+4. Jalankan:
 
 ```bash
-docker pull ghcr.io/codebymitch/titanbot:main
+node ../SKAW-Boombox-v9/scripts/install-skaw-boombox-v9.mjs
+npm install --save-exact ffmpeg-static@5.3.0
+node scripts/check-boombox-v9.mjs
 ```
 
-<a name="manual-installation-steps"></a>
-## Manual Installation Steps
+Installer akan:
 
-### Prerequisites
-- Node.js 20.10.0 or higher
-- PostgreSQL server (recommended) or memory storage fallback
-- Discord bot application with proper intents
+- memvalidasi syntax payload sebelum menyentuh repo;
+- menyimpan backup di `/tmp/skaw-boombox-v9-backup-*`, jadi tidak membuat folder backup lama di repo;
+- mengganti hanya file Boombox yang ada di paket;
+- memastikan `src/app.js` memanggil `startBoomboxService(this)` sekali;
+- mengubah `engines.node` menjadi `>=22.0.0`;
+- menulis `.node-version` = `22`;
+- memakai `ffmpeg-static@5.3.0`;
+- menambahkan script `npm run boombox:check`.
 
-1. **Clone the Repository**
-   ```bash
-   git clone https://github.com/codebymitch/TitanBot.git
-   cd TitanBot
-   ```
+Tidak ada perubahan pada Giveaway atau Auto Message di paket ini.
 
-2. **Install Dependencies**
-   ```bash
-   npm install
-   ```
+## Railway — WAJIB
 
-3. **Configure Environment Variables**
-   ```bash
-   cp .env.example .env
-   ```
-   Edit `.env` with your configuration (only the following variables require configuration, leave remaining variables as default):
-   ```env
-   # Discord Bot Configuration
-   DISCORD_TOKEN=your_discord_bot_token_here
-   CLIENT_ID=your_discord_client_id_here
-   GUILD_ID=your_discord_guild_id_here
+Di Railway, buka:
 
-   # PostgreSQL Configuration (Primary Database)
-   POSTGRES_URL=postgresql://postgres:yourpassword@localhost:5432/titanbot
-   POSTGRES_HOST=localhost
-   POSTGRES_PORT=5432
-   POSTGRES_DB=titanbot
-   POSTGRES_USER=postgres
-   POSTGRES_PASSWORD=yourpassword
-   ```
+`comfortable-vitality` → service `skaw-bot` → **Variables**
 
-   Production note:
-   - `NODE_ENV=production`
-   - `LOG_LEVEL=warn` for a clean production console (critical issues + startup status)
-   - `LOG_LEVEL=info` if you want more detailed operational logs
-   - If your chosen `PORT` is already used, TitanBot automatically tries the next port(s)
+Tambahkan:
 
-   Environment options reference:
-   - `NODE_ENV`: `development`, `production`, `test` (any non-`production` value is treated as non-production)
-   - `LOG_LEVEL`: `error`, `warn`, `info`, `http`, `verbose`, `debug`, `silly`
-   - Accepted aliases for `LOG_LEVEL` in this bot: `warns`, `warning`, `warnings` → `warn`
+```text
+RAILPACK_NODE_VERSION=22
+```
 
-   Recommended production `.env` (easy mode + default mode):
-   ```env
-   NODE_ENV=production
-   LOG_LEVEL=warn
-   WEB_HOST=0.0.0.0
-   PORT=3000
-   PORT_RETRY_ATTEMPTS=5
-   ```
-   This gives clear startup/online status messages while keeping logs simple for non-technical operators.
-   If port `3000` is busy, the bot tries the next available ports automatically (up to `PORT_RETRY_ATTEMPTS`).
+Lalu redeploy service. Railpack memprioritaskan `RAILPACK_NODE_VERSION` di atas `engines.node`.
 
-### Multiple servers
+Setelah redeploy, buka Railway service shell:
 
-Slash commands are registered **globally** on startup (via `CLIENT_ID`), so the bot works in every server it is invited to. `GUILD_ID` stays in the tutorial `.env` for setup steps but is not used for command registration.
+```bash
+railway ssh --service skaw-bot
+```
 
-Notes:
-- Global slash commands may take up to about an hour to propagate on first deploy
-- Each server has **isolated** data: config, economy, tickets, leveling, dashboards, warnings, etc. (all keys are scoped as `guild:{guildId}:...`)
-- In the [Discord Developer Portal](https://discord.com/developers/applications), ensure your bot is not restricted to a single guild if you plan to invite it elsewhere
-- Generate an OAuth2 invite URL from the [Discord Developer Portal](https://discord.com/developers/applications) (OAuth2 → URL Generator, scopes: `bot` and `applications.commands`)
+dan cek:
 
-4. **Setup PostgreSQL Database** (Optional but recommended)
-   ```bash
-   # Create database and user
-   createdb titanbot
-   createuser titanbot
-   psql -c "ALTER USER titanbot PASSWORD 'yourpassword';"
-   psql -c "GRANT ALL PRIVILEGES ON DATABASE titanbot TO titanbot;"
-   ```
+```bash
+node -v
+```
 
-5. **Verify Database Setup**
-   ```bash
-   npm run migrate:check
-   ```
+Target: `v22.x.x` atau lebih baru.
 
-6. **Start the Bot**
-   ```bash
-   npm start
-   ```
+## Command Discord
 
-> **Note on database migrations:** Schema tables and legacy key migrations run
-> **automatically on startup**, so` managed hosts like **Railway** need no manual
-> migration step — just deploy/restart. To disable auto-migration set
-> `AUTO_MIGRATE=false`. You can still run a manual key migration locally with
-> `node scripts/migrate-keys.js --dry-run` (preview) or `node scripts/migrate-keys.js`.
-<a name="bot-intents"></a>
+Admin/Manage Server:
 
-## Required Bot Intents
-TitanBot requires the following Discord intents:
-- **Guilds**
-- **Guild Messages**
-- **Message Content**
-- **Guild Members**
-- **Guild Message Reactions**
-- **Guild Voice States**
-- **Direct Messages**
-- **Bot**
-- **Applications.commands**
+```text
+/boombox-config channel channel:<CHANNEL>
+/boombox-config enable
+/boombox-config disable
+/boombox-config status
+/boombox-config test
+/boombox-config reset
+```
 
-### Required Permissions
-- **View Channels**
-- **Send Messages**
-- **Embed Links**
-- **Attach Files**
-- **Read Message History**
-- **Manage Messages**
-- **Manage Channels**
-- **Manage Roles**
-- **Kick Members**
-- **Manage Messages**
-- **Ban Members**
-- **Moderate Members**
-- **Connect**
+User di channel yang sudah dikonfigurasi:
 
-## License
+```text
+/bb url:<URL YouTube/TikTok/Spotify/SoundCloud>
+/bb url:<URL> ulang:true
+```
 
-TitanBot is released under the MIT License. See [LICENSE](LICENSE) for details.
+Prefix:
 
-## Thank You
+```text
+!bb <URL YouTube/TikTok/Spotify/SoundCloud>
+!bb ulang <URL Top4toP hasil SKAW>
+!bb ulang <URL sumber asli>
+```
 
-Thank you for choosing TitanBot for your Discord server! We're constantly working to improve and add new features based on community feedback.
+`/bb` dan `!bb` hanya diproses ketika channel cocok dengan channel yang disimpan. URL acak tidak diproses.
 
-*Last updated: May 2026*
+## Alur conversion
+
+```text
+Discord command
+   → validasi guild/channel/cooldown
+   → queue
+   → yt-dlp metadata
+   → download audio
+   → FFmpeg → MP3 192K
+   → ukuran MP3 divalidasi
+   → upload ke Top4toP
+   → direct HTTP MP3 divalidasi
+   → history tersimpan
+   → hasil dikirim ke Discord
+```
+
+Untuk Spotify, bot mengambil metadata track dari Spotify oEmbed lalu mencari sumber audio publik yang cocok melalui yt-dlp/YouTube Search. Bot tidak mencoba mengambil file audio privat dari akun Spotify.
+
+## Engine yt-dlp
+
+v9 menggunakan binary resmi yt-dlp dan SHA-256 resmi dari `SHA2-256SUMS`.
+
+Cache default ada di temporary directory:
+
+```text
+/tmp/skaw-group/boombox-v9/
+```
+
+Variabel opsional:
+
+```text
+BOOMBOX_YTDLP_VERSION=2026.08.19
+BOOMBOX_RUNTIME_DIR=/custom/writable/cache
+BOOMBOX_YTDLP_PATH=/custom/path/to/yt-dlp
+BOOMBOX_YTDLP_COOKIES_FILE=/custom/cookies.txt
+BOOMBOX_YTDLP_PROXY=http://host:port
+BOOMBOX_AUDIO_QUALITY=192K
+```
+
+`BOOMBOX_YTDLP_PATH` harus menunjuk ke executable yt-dlp yang benar-benar bisa dijalankan oleh container.
+
+## Top4toP
+
+v9 membaca form upload dari halaman Top4toP saat runtime, membawa hidden/checkbox fields yang ditemukan, mengupload MP3, mencari URL `.mp3` dari response, lalu menormalkannya ke `http://` dan memvalidasi direct response tanpa mengikuti redirect.
+
+Top4toP saat ini mencantumkan MP3 sebagai format yang didukung. Batas upload visitor pada panduan publik adalah 100 MB; v9 memakai default maksimum 95 MB untuk memberi margin.
+
+Top4toP bukan API resmi yang dipaketkan ke v9. Karena itu `boombox-config test` melakukan probe form upload, sementara keberhasilan upload nyata hanya bisa dibuktikan oleh conversion test di deployment yang sedang berjalan.
+
+Gunakan hanya audio yang memang kamu berhak mengunduh/mengonversi dan patuhi aturan layanan Top4toP.
+
+## Reroll
+
+History memetakan source URL ke setiap URL Top4toP yang dibuat SKAW.
+
+Contoh:
+
+```text
+!bb ulang http://f1.top4top.io/p_123/test.mp3
+```
+
+akan mencari record tersebut dan mengambil `sourceUrl` asli, lalu membuat conversion + upload baru.
+
+Kalau URL Top4toP bukan hasil SKAW, bot tidak menebak sumber asalnya; pengguna harus memasukkan URL sumber asli.
+
+## Pemeriksaan setelah deploy
+
+1. `/boombox-config test`
+2. `/boombox-config status`
+3. `/boombox-config channel`
+4. `/boombox-config enable`
+5. jalankan satu test:
+
+```text
+/bb url:<URL YouTube pendek/public>
+```
+
+Periksa progress sampai muncul:
+
+```text
+QUEUE → METADATA → DOWNLOAD → CONVERT → UPLOAD → DONE
+```
+
+Hasil akhir harus berupa URL Top4toP direct `http://...mp3`.
+
+## Troubleshooting
+
+Kalau `Node.js 20.x` masih muncul di Discord:
+
+- pastikan `RAILPACK_NODE_VERSION=22` ada di service yang benar;
+- redeploy, bukan hanya restart;
+- buka Railway SSH dan cek `node -v`.
+
+Kalau muncul `yt-dlp ... ENOENT`:
+
+```bash
+railway ssh --service skaw-bot
+node -v
+ls -lah /tmp/skaw-group/boombox-v9/
+```
+
+Lalu:
+
+```bash
+/boombox-config test
+```
+
+v9 sudah melakukan self-test `yt-dlp --version` sebelum menganggap engine ready. Jadi error binary akan ditampilkan sebagai diagnosis engine, bukan menunggu sampai conversion.
+
+## Rollback
+
+Installer mencatat backup di `/tmp/skaw-boombox-v9-backup-*`.
+
+Contoh:
+
+```bash
+node scripts/rollback-skaw-boombox-v9.mjs /tmp/skaw-boombox-v9-backup-YYYY-MM-DDTHH-MM-SS-SSSZ
+```
+
+Setelah rollback, review:
+
+```bash
+git diff
+```
+
+sebelum commit.
